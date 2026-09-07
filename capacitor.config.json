@@ -1,0 +1,11 @@
+{
+  "appId": "pk.thechocolatehouse.pos",
+  "appName": "The Chocolate House",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

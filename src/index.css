@@ -1,0 +1,247 @@
+:root {
+  --bg-primary: #120b07;
+  --bg-secondary: #1a0f0a;
+  --bg-surface: #22140d;
+  --bg-card: #281810;
+  --bg-card-hover: #331f15;
+  --border-subtle: rgba(212, 163, 89, 0.15);
+  --border-focus: rgba(212, 163, 89, 0.45);
+  --gold-primary: #d4a359;
+  --gold-light: #f3ce8a;
+  --gold-dark: #aa7a34;
+  --gold-glow: rgba(212, 163, 89, 0.25);
+  --text-main: #fdfaf6;
+  --text-muted: #c8b7a6;
+  --text-dim: #8e7b6d;
+  --status-paid: #10b981;
+  --status-pending: #f59e0b;
+  --status-danger: #ef4444;
+  --font-serif: 'Cinzel', serif;
+  --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: var(--bg-primary);
+  background-image: 
+    radial-gradient(ellipse at 50% -20%, rgba(212, 163, 89, 0.12), transparent 70%),
+    radial-gradient(circle at 10% 40%, rgba(68, 38, 22, 0.35), transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(68, 38, 22, 0.3), transparent 40%);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  padding-bottom: calc(72px + var(--safe-bottom));
+  overscroll-behavior-y: none;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: #3c2418;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-dark);
+}
+
+/* Base Utility Classes */
+.gold-text {
+  color: var(--gold-primary);
+}
+.gold-gradient-text {
+  background: linear-gradient(135deg, #fff2db 0%, #e2b265 50%, #ba8339 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.brand-font {
+  font-family: var(--font-serif);
+  letter-spacing: 0.05em;
+}
+
+/* Glass Card */
+.glass-panel {
+  background: rgba(36, 21, 14, 0.92);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.6);
+}
+
+.glass-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  transition: all 0.2s ease;
+}
+
+.glass-card:active {
+  transform: scale(0.98);
+}
+
+/* Luxury Button Styles */
+.btn-gold {
+  background: linear-gradient(135deg, #e3b368 0%, #be873b 100%);
+  color: #120904;
+  font-weight: 700;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 20px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 14px rgba(212, 163, 89, 0.25);
+  font-family: var(--font-sans);
+  touch-action: manipulation;
+}
+.btn-gold:active {
+  transform: scale(0.97);
+  box-shadow: 0 2px 8px rgba(212, 163, 89, 0.2);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 11px 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  touch-action: manipulation;
+}
+.btn-secondary:active {
+  transform: scale(0.97);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.btn-icon {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  touch-action: manipulation;
+}
+.btn-icon:active {
+  transform: scale(0.92);
+  border-color: var(--gold-primary);
+  color: var(--gold-light);
+}
+
+/* Form Inputs */
+.form-input, .form-select {
+  width: 100%;
+  background: rgba(18, 10, 6, 0.85);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  font-family: var(--font-sans);
+  -webkit-appearance: none;
+}
+.form-input:focus, .form-select:focus {
+  border-color: var(--gold-primary);
+  box-shadow: 0 0 0 2px var(--gold-glow);
+}
+.form-select option {
+  background: var(--bg-card);
+  color: var(--text-main);
+}
+
+/* Badges */
+.badge-paid {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.badge-pending {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Mobile Bottom Sheet Drawer Animation */
+@keyframes slideUpDrawer {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.drawer-slide-up {
+  animation: slideUpDrawer 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* PRINT STYLESHEET - 80mm Thermal & A4 Invoices */
+@media print {
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    padding-bottom: 0 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .modal-overlay {
+    position: static !important;
+    background: none !important;
+    padding: 0 !important;
+  }
+  .receipt-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    color: #000 !important;
+  }
+}
