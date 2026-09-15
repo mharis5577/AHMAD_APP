@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
-import { X, Share2, Printer, Copy, Check, Building2, Phone, FileText, Image as ImageIcon, CheckCircle, Clock } from 'lucide-react';
+import { X, Share2, Printer, Copy, Check, Building2, Phone, FileText, Image as ImageIcon, CheckCircle, Clock, Share } from 'lucide-react';
 import { BUSINESS_INFO } from '../data/initialData';
 import { exportElementAsHdImage, exportElementAsHdPdf } from '../utils/hdExport';
+import { shareBillText, openNativeShareSheet } from '../utils/shareUtils';
 
 export default function PurchaseModal({ purchase, onClose }) {
   const cardRef = useRef(null);
@@ -54,13 +55,11 @@ export default function PurchaseModal({ purchase, onClose }) {
       msg += `Discount: -Rs. ${purchase.discount.toLocaleString()}\n`;
     }
     msg += `*NET TOTAL: Rs. ${purchase.netTotal.toLocaleString()}*\n`;
-    msg += `Payment Status: *${currentStatus.toUpperCase()}*\n`;
-    if (purchase.paidFromBank) msg += `Paid From: ${purchase.paidFromBank}\n`;
-    if (purchase.txRef) msg += `Tx Ref / Proof: ${purchase.txRef}\n`;
+    msg += `Payment Status: *${currentStatus.toUpperCase()}* (${purchase.paymentMethod})\n`;
 
     if (purchase.supplierBank?.bankName) {
       msg += `═══════════════════════════\n`;
-      msg += `💳 *SUPPLIER BENEFICIARY ACCOUNT:*\n`;
+      msg += `🏦 *SUPPLIER BENEFICIARY ACCOUNT:*\n`;
       msg += `Bank: ${purchase.supplierBank.bankName}\n`;
       msg += `Title: ${purchase.supplierBank.accountTitle}\n`;
       if (purchase.supplierBank.accountNo) msg += `A/C: ${purchase.supplierBank.accountNo}\n`;
@@ -71,14 +70,21 @@ export default function PurchaseModal({ purchase, onClose }) {
     return msg;
   };
 
-  const handleWhatsAppShare = () => {
+  const handleWhatsAppShare = async () => {
     const text = generateWhatsAppMessage();
-    const encoded = encodeURIComponent(text);
-    const phone = purchase.supplierPhone ? purchase.supplierPhone.replace(/[^0-9]/g, '') : '';
-    const cleanPhone = phone.startsWith('0') ? '92' + phone.slice(1) : phone;
+    await shareBillText({
+      title: `Purchase Voucher #${purchase.id}`,
+      text,
+      phone: purchase.supplierPhone
+    });
+  };
 
-    const url = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
-    window.open(url, '_blank');
+  const handleNativeShare = async () => {
+    const text = generateWhatsAppMessage();
+    await openNativeShareSheet({
+      title: `Purchase Voucher #${purchase.id}`,
+      text
+    });
   };
 
   return (
@@ -313,12 +319,12 @@ export default function PurchaseModal({ purchase, onClose }) {
         <div className="no-print" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '14px' }}>
           <button onClick={handleDownloadHdImage} disabled={isExporting} className="btn-gold" style={{ padding: '12px 8px', fontSize: '13px' }}>
             <ImageIcon size={16} />
-            <span>{isExporting ? 'Saving...' : 'Save HD Voucher'}</span>
+            <span>{isExporting ? 'Preparing...' : 'Share HD Voucher'}</span>
           </button>
 
           <button onClick={handleDownloadHdPdf} disabled={isExporting} className="btn-secondary" style={{ padding: '12px 8px', fontSize: '13px' }}>
             <FileText size={16} color="var(--gold-light)" />
-            <span>Download PDF</span>
+            <span>{isExporting ? 'Preparing...' : 'Share PDF'}</span>
           </button>
 
           <button onClick={handleWhatsAppShare} className="btn-secondary" style={{ padding: '12px 8px', fontSize: '13px', borderColor: '#25D366', color: '#4ade80' }}>
@@ -326,7 +332,12 @@ export default function PurchaseModal({ purchase, onClose }) {
             <span>WhatsApp Supplier</span>
           </button>
 
-          <button onClick={handlePrint} className="btn-secondary" style={{ padding: '12px 8px', fontSize: '13px' }}>
+          <button onClick={handleNativeShare} className="btn-secondary" style={{ padding: '12px 8px', fontSize: '13px', borderColor: 'var(--gold-primary)', color: 'var(--gold-light)' }}>
+            <Share size={16} />
+            <span>Share Sheet</span>
+          </button>
+
+          <button onClick={handlePrint} className="btn-secondary" style={{ gridColumn: 'span 2', padding: '10px 8px', fontSize: '13px', opacity: 0.85 }}>
             <Printer size={16} />
             <span>Print Voucher</span>
           </button>

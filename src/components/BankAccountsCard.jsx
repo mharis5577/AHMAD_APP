@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Building2, Copy, Check, Share2, Edit2, Plus, Trash2, RotateCcw, X, Save, Eye, Sparkles } from 'lucide-react';
 import { BUSINESS_INFO, BANK_ACCOUNTS as DEFAULT_BANKS } from '../data/initialData';
+import { shareBillText } from '../utils/shareUtils';
 
 const COMMON_BANKS = [
   { name: 'Meezan Bank', code: 'MEZN' },
@@ -19,6 +20,7 @@ const COMMON_BANKS = [
 
 export default function BankAccountsCard({ banks = DEFAULT_BANKS, onUpdateBanks }) {
   const [copiedId, setCopiedId] = useState(null);
+  const [copiedAll, setCopiedAll] = useState(false);
   const [editingBank, setEditingBank] = useState(null); // bank object being edited
   const [isAdding, setIsAdding] = useState(false);
   const [toast, setToast] = useState(null);
@@ -43,7 +45,7 @@ export default function BankAccountsCard({ banks = DEFAULT_BANKS, onUpdateBanks 
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const shareBankDetailsWhatsApp = () => {
+  const shareBankDetailsWhatsApp = async () => {
     let text = `🍫 *${BUSINESS_INFO.name.toUpperCase()}*\n`;
     text += `Official Bank Accounts for Online Transfer:\n\n`;
 
@@ -57,8 +59,10 @@ export default function BankAccountsCard({ banks = DEFAULT_BANKS, onUpdateBanks 
     text += `📞 Official WhatsApp / Help: ${BUSINESS_INFO.phone}\n`;
     text += `_Please share screenshot after transfer._`;
 
-    const encoded = encodeURIComponent(text);
-    window.open(`https://wa.me/?text=${encoded}`, '_blank');
+    await shareBillText({
+      title: 'Official Bank Accounts',
+      text
+    });
   };
 
   const handleStartEdit = (bank) => {

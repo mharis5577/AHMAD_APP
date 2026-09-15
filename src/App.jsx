@@ -203,6 +203,8 @@ export default function App() {
             onUpdatePurchaseStatus={handleUpdatePurchaseStatus}
             onViewBill={(bill) => setSelectedBillForModal(bill)}
             onViewPurchase={(pur) => setSelectedPurchaseForModal(pur)}
+            onBillCreated={handleBillCreated}
+            onPurchaseCreated={handlePurchaseCreated}
           />
         )}
 

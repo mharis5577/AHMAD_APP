@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
-import { X, Share2, Printer, Copy, Check, Building2, Phone, FileText, Image as ImageIcon, CheckCircle, Clock } from 'lucide-react';
+import { X, Share2, Printer, Copy, Check, Building2, Phone, FileText, Image as ImageIcon, CheckCircle, Clock, Share } from 'lucide-react';
 import { BUSINESS_INFO, BANK_ACCOUNTS } from '../data/initialData';
 import { exportElementAsHdImage, exportElementAsHdPdf } from '../utils/hdExport';
+import { shareBillText, openNativeShareSheet } from '../utils/shareUtils';
 
 export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
   const cardRef = useRef(null);
@@ -76,21 +77,41 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
     return msg;
   };
 
-  const handleWhatsAppShare = () => {
+  const handleWhatsAppShare = async () => {
     const text = generateWhatsAppMessage();
-    const encoded = encodeURIComponent(text);
-    const phone = bill.customerPhone ? bill.customerPhone.replace(/[^0-9]/g, '') : '';
-    const cleanPhone = phone.startsWith('0') ? '92' + phone.slice(1) : phone;
-
-    const url = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
-    window.open(url, '_blank');
+    await shareBillText({
+      title: `Bill #${bill.id} - ${BUSINESS_INFO.name}`,
+      text,
+      phone: bill.customerPhone
+    });
   };
 
-  const handleCopyText = () => {
+  const handleNativeShare = async () => {
     const text = generateWhatsAppMessage();
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    await openNativeShareSheet({
+      title: `Bill #${bill.id} - ${BUSINESS_INFO.name}`,
+      text
+    });
+  };
+
+  const handleCopyText = async () => {
+    const text = generateWhatsAppMessage();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.warn('Copy failed:', err);
+    }
   };
 
   return (
@@ -348,7 +369,7 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
             style={{ padding: '12px 8px', fontSize: '13px' }}
           >
             <ImageIcon size={16} />
-            <span>{isExporting ? 'Saving Image...' : 'Save HD Photo'}</span>
+            <span>{isExporting ? 'Preparing Image...' : 'Share HD Photo'}</span>
           </button>
 
           <button
@@ -358,7 +379,7 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
             style={{ padding: '12px 8px', fontSize: '13px' }}
           >
             <FileText size={16} color="var(--gold-light)" />
-            <span>Download PDF</span>
+            <span>{isExporting ? 'Preparing PDF...' : 'Share PDF'}</span>
           </button>
 
           <button
@@ -371,9 +392,18 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
           </button>
 
           <button
+            onClick={handleNativeShare}
+            className="btn-secondary"
+            style={{ padding: '12px 8px', fontSize: '13px', borderColor: 'var(--gold-primary)', color: 'var(--gold-light)' }}
+          >
+            <Share size={16} />
+            <span>Share Sheet</span>
+          </button>
+
+          <button
             onClick={handlePrint}
             className="btn-secondary"
-            style={{ padding: '12px 8px', fontSize: '13px' }}
+            style={{ gridColumn: 'span 2', padding: '10px 8px', fontSize: '13px', opacity: 0.85 }}
           >
             <Printer size={16} />
             <span>Print Receipt</span>

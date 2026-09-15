@@ -11,7 +11,9 @@ export default function CustomerLedger({
   onUpdateBillStatus, 
   onUpdatePurchaseStatus, 
   onViewBill, 
-  onViewPurchase 
+  onViewPurchase,
+  onBillCreated,
+  onPurchaseCreated
 }) {
   const [ledgerType, setLedgerType] = useState('customers'); // 'customers' or 'suppliers'
   const [search, setSearch] = useState('');
@@ -427,6 +429,7 @@ export default function CustomerLedger({
           onClose={() => setSelectedClientModal(null)}
           onUpdateBillStatus={onUpdateBillStatus}
           onViewBill={onViewBill}
+          onBillCreated={onBillCreated}
         />
       )}
 
@@ -434,9 +437,11 @@ export default function CustomerLedger({
       {activeModalSupplier && (
         <SupplierLedgerModal
           supplier={activeModalSupplier}
+          banks={banks}
           onClose={() => setSelectedSupplierModal(null)}
           onUpdatePurchaseStatus={onUpdatePurchaseStatus}
           onViewPurchase={onViewPurchase}
+          onPurchaseCreated={onPurchaseCreated}
         />
       )}
 

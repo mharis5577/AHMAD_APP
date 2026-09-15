@@ -1,5 +1,7 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { shareOrDownloadFile } from './shareUtils';
+import { Capacitor } from '@capacitor/core';
 
 /**
  * Capture an element and export as an Ultra HD Mobile Image (JPG)
@@ -18,10 +20,13 @@ export async function exportElementAsHdImage(element, filename = 'TheChocolateHo
     });
 
     const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = filename;
-    link.click();
+    await shareOrDownloadFile({
+      filename,
+      dataUrl,
+      mimeType: 'image/jpeg',
+      title: 'Bill HD Image',
+      dialogTitle: 'Share / Save HD Bill Image'
+    });
     return dataUrl;
   } catch (err) {
     console.error('HD Image Export failed:', err);
@@ -54,9 +59,22 @@ export async function exportElementAsHdPdf(element, filename = 'TheChocolateHous
     });
 
     pdf.addImage(imgData, 'JPEG', 0, 0, 100, (100 * canvas.height) / canvas.width);
-    pdf.save(filename);
+
+    if (Capacitor.isNativePlatform()) {
+      const pdfDataUri = pdf.output('datauristring');
+      await shareOrDownloadFile({
+        filename,
+        dataUrl: pdfDataUri,
+        mimeType: 'application/pdf',
+        title: 'Bill PDF',
+        dialogTitle: 'Share / Save Bill PDF'
+      });
+    } else {
+      pdf.save(filename);
+    }
   } catch (err) {
     console.error('HD PDF Export failed:', err);
     alert('Failed to generate HD PDF. Please try again.');
   }
 }
+

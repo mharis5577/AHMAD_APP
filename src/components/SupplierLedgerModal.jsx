@@ -1,37 +1,170 @@
-import React, { useState } from 'react';
-import { X, Building, Phone, CreditCard, Share2, CheckCircle, Clock, Eye, Check, Copy } from 'lucide-react';
-import { BUSINESS_INFO } from '../data/initialData';
+import React, { useState, useMemo } from 'react';
+import { X, Building, Phone, CreditCard, Share2, CheckCircle, Clock, Eye, Check, Copy, Plus, Trash2, Receipt, Sparkles } from 'lucide-react';
+import { BUSINESS_INFO, BANK_ACCOUNTS } from '../data/initialData';
+import { shareBillText } from '../utils/shareUtils';
+import confetti from 'canvas-confetti';
+
+const QUICK_STOCK_ITEMS = [
+  'Cocoa Butter (kg)',
+  'Dark Chocolate Callets (kg)',
+  'Milk Chocolate Couverture (kg)',
+  'Roasted Hazelnuts (kg)',
+  'Custom Packaging Boxes'
+];
 
 export default function SupplierLedgerModal({ 
   supplier, 
+  banks = BANK_ACCOUNTS,
   onClose, 
   onUpdatePurchaseStatus, 
-  onViewPurchase 
+  onViewPurchase,
+  onPurchaseCreated 
 }) {
   const [copiedField, setCopiedField] = useState(null);
 
   if (!supplier) return null;
 
+  const activeBanks = (banks && banks.length > 0) ? banks : BANK_ACCOUNTS;
   const hasPayable = supplier.totalPayable > 0;
+  const pendingPurchases = supplier.purchases.filter(p => p.status === 'Pending');
+
+  // Add Purchase state
+  const [isAddingPurchase, setIsAddingPurchase] = useState(false);
+  const [rows, setRows] = useState([
+    { id: '1', name: '', qty: 1, price: '', total: 0 }
+  ]);
+  const [discount, setDiscount] = useState(0);
+  const [paymentStatus, setPaymentStatus] = useState('Pending');
+  const [paymentMethod, setPaymentMethod] = useState(() => 
+    activeBanks[0] ? `Bank Transfer (${activeBanks[0].bankName})` : 'Cash'
+  );
+  const [notes, setNotes] = useState('');
 
   const copyToClipboard = (text, field) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch (e) {
+      console.warn('Copy error', e);
+    }
   };
 
-  // Send WhatsApp Payment Notice to Supplier
-  const sendWhatsAppAdvice = () => {
-    const pendingPurchases = supplier.purchases.filter(p => p.status === 'Pending');
+  const handleRowChange = (id, field, value) => {
+    setRows(prev => prev.map(row => {
+      if (row.id !== id) return row;
+      const updated = { ...row, [field]: value };
+      const qtyNum = Number(updated.qty) || 0;
+      const priceNum = Number(updated.price) || 0;
+      updated.total = qtyNum * priceNum;
+      return updated;
+    }));
+  };
 
-    let msg = `🍫 *${BUSINESS_INFO.name.toUpperCase()} — SUPPLIER PAYMENT RECORD*\n`;
+  const handleAddRow = (initialName = '') => {
+    setRows(prev => [
+      ...prev,
+      { id: Date.now().toString(), name: initialName, qty: 1, price: '', total: 0 }
+    ]);
+  };
+
+  const handleRemoveRow = (id) => {
+    if (rows.length === 1) {
+      setRows([{ id: '1', name: '', qty: 1, price: '', total: 0 }]);
+      return;
+    }
+    setRows(prev => prev.filter(r => r.id !== id));
+  };
+
+  const handleAddQuickChip = (itemName) => {
+    const emptyRow = rows.find(r => !r.name.trim());
+    if (emptyRow) {
+      handleRowChange(emptyRow.id, 'name', itemName);
+    } else {
+      handleAddRow(itemName);
+    }
+  };
+
+  const subtotal = useMemo(() => {
+    return rows.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
+  }, [rows]);
+
+  const netTotal = useMemo(() => {
+    return Math.max(0, subtotal - (Number(discount) || 0));
+  }, [subtotal, discount]);
+
+  const handleSavePurchase = (e) => {
+    e.preventDefault();
+
+    const validItems = rows
+      .filter(r => r.name.trim() !== '' && Number(r.price) > 0)
+      .map((r, i) => ({
+        id: `p_item_${i + 1}`,
+        name: r.name.trim(),
+        qty: Number(r.qty) || 1,
+        price: Number(r.price) || 0,
+        total: (Number(r.qty) || 1) * (Number(r.price) || 0)
+      }));
+
+    if (validItems.length === 0) {
+      alert('Please enter at least one item with valid purchase cost!');
+      return;
+    }
+
+    const purchaseId = `PUR-${Math.floor(2000 + Math.random() * 8000)}`;
+    const newPurchase = {
+      id: purchaseId,
+      date: new Date().toISOString(),
+      supplierName: supplier.name,
+      supplierPhone: supplier.phone || '',
+      supplierBank: supplier.bank || {},
+      items: validItems,
+      subtotal,
+      discount: Number(discount) || 0,
+      netTotal,
+      paymentMethod,
+      status: paymentStatus,
+      notes: notes.trim()
+    };
+
+    try {
+      confetti({
+        particleCount: 50,
+        spread: 60,
+        origin: { y: 0.7 },
+        colors: ['#10b981', '#34d399', '#f3ce8a']
+      });
+    } catch (err) {
+      // safe fallback
+    }
+
+    onPurchaseCreated?.(newPurchase);
+
+    // Reset form
+    setRows([{ id: '1', name: '', qty: 1, price: '', total: 0 }]);
+    setDiscount(0);
+    setNotes('');
+    setIsAddingPurchase(false);
+  };
+
+  // WhatsApp Payment Advice
+  const sendWhatsAppAdvice = async () => {
+    let msg = `🍫 *${BUSINESS_INFO.name.toUpperCase()} — SUPPLIER PAYMENT ADVICE*\n`;
     msg += `═══════════════════════════\n`;
     msg += `🏢 Supplier: *${supplier.name}*\n`;
-    if (supplier.phone) msg += `📞 Contact: ${supplier.phone}\n`;
+    if (supplier.phone) msg += `📞 Phone: ${supplier.phone}\n`;
     msg += `📅 Date: ${new Date().toLocaleDateString('en-PK', { dateStyle: 'medium' })}\n`;
     msg += `═══════════════════════════\n\n`;
 
-    msg += `📊 *ACCOUNT SUMMARY:*\n`;
     msg += `• Total Stock Purchases: Rs. ${supplier.totalPurchased.toLocaleString()}\n`;
     msg += `• Total Amount Paid: Rs. ${supplier.totalPaid.toLocaleString()}\n`;
     msg += `• *BALANCE PAYABLE: Rs. ${supplier.totalPayable.toLocaleString()}*\n\n`;
@@ -55,11 +188,11 @@ export default function SupplierLedgerModal({
 
     msg += `_Payment advice from The Chocolate House (03353465000)._`;
 
-    const encoded = encodeURIComponent(msg);
-    const cleanPhone = supplier.phone ? supplier.phone.replace(/[^0-9]/g, '') : '';
-    const waPhone = cleanPhone.startsWith('0') ? '92' + cleanPhone.slice(1) : cleanPhone;
-
-    window.open(waPhone ? `https://wa.me/${waPhone}?text=${encoded}` : `https://wa.me/?text=${encoded}`, '_blank');
+    await shareBillText({
+      title: `Payment Advice - ${supplier.name}`,
+      text: msg,
+      phone: supplier.phone
+    });
   };
 
   // Settle all unpaid purchases for this supplier
@@ -95,7 +228,7 @@ export default function SupplierLedgerModal({
         className="glass-panel"
         style={{
           width: '100%',
-          maxWidth: '540px',
+          maxWidth: '520px',
           margin: '0 auto',
           padding: '20px 18px',
           border: '1px solid #10b981',
@@ -188,22 +321,31 @@ export default function SupplierLedgerModal({
           </div>
         </div>
 
-        {/* Action Buttons: WhatsApp Advice & Settle All */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+        {/* Action Buttons: Add Purchase, WhatsApp Advice & Settle All */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => setIsAddingPurchase(!isAddingPurchase)}
+            className="btn-gold"
+            style={{ flex: '1 1 140px', padding: '10px', fontSize: '12.5px', background: 'linear-gradient(135deg, #10b981, #059669)', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+          >
+            {isAddingPurchase ? <X size={15} /> : <Plus size={15} />}
+            <span>{isAddingPurchase ? 'Close Purchase Form' : '+ Add Stock Voucher'}</span>
+          </button>
+
           <button
             onClick={sendWhatsAppAdvice}
             className="btn-secondary"
-            style={{ flex: 1, padding: '10px', fontSize: '12px', borderColor: '#25D366', color: '#4ade80' }}
+            style={{ flex: '1 1 140px', padding: '10px', fontSize: '12px', borderColor: '#25D366', color: '#4ade80', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
           >
             <Share2 size={14} color="#25D366" />
-            <span>WhatsApp Payment Advice</span>
+            <span>WhatsApp Advice</span>
           </button>
 
           {hasPayable && (
             <button
               onClick={handleSettleAll}
-              className="btn-gold"
-              style={{ padding: '10px 14px', fontSize: '12px', background: 'linear-gradient(135deg, #10b981, #059669)', color: '#ffffff' }}
+              className="btn-secondary"
+              style={{ padding: '10px 14px', fontSize: '12px', borderColor: '#10b981', color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px' }}
               title="Mark all pending purchase invoices as paid"
             >
               <Check size={14} />
@@ -212,11 +354,258 @@ export default function SupplierLedgerModal({
           )}
         </div>
 
+        {/* IN-LEDGER ADD STOCK VOUCHER FORM */}
+        {isAddingPurchase && (
+          <form 
+            onSubmit={handleSavePurchase}
+            className="glass-card" 
+            style={{ 
+              padding: '16px', 
+              marginBottom: '18px', 
+              border: '2px solid #10b981', 
+              borderRadius: '14px',
+              background: 'linear-gradient(145deg, rgba(16, 40, 28, 0.95), rgba(12, 24, 18, 0.98))'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#34d399', fontWeight: '800', fontSize: '14px' }}>
+                <Receipt size={16} />
+                <span>New Stock Purchase for {supplier.name}</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setIsAddingPurchase(false)} 
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Quick Chips */}
+            <div style={{ marginBottom: '10px' }}>
+              <div style={{ fontSize: '10.5px', color: 'var(--text-dim)', marginBottom: '5px' }}>Common Stock Items:</div>
+              <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                {QUICK_STOCK_ITEMS.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => handleAddQuickChip(item)}
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      borderRadius: '12px',
+                      background: 'rgba(16, 185, 129, 0.12)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      color: '#34d399',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    + {item}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Items Table */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+              {rows.map((row, idx) => (
+                <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1fr 65px 85px 30px', gap: '6px', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    placeholder={`Stock Item ${idx + 1}`}
+                    value={row.name}
+                    onChange={(e) => handleRowChange(row.id, 'name', e.target.value)}
+                    className="form-input"
+                    style={{ height: '34px', fontSize: '12px', padding: '0 8px' }}
+                    required={idx === 0}
+                  />
+
+                  <input
+                    type="number"
+                    placeholder="Qty"
+                    min="1"
+                    value={row.qty}
+                    onChange={(e) => handleRowChange(row.id, 'qty', e.target.value)}
+                    className="form-input"
+                    style={{ height: '34px', fontSize: '12px', padding: '0 6px', textAlign: 'center' }}
+                  />
+
+                  <input
+                    type="number"
+                    placeholder="Cost (Rs)"
+                    min="0"
+                    value={row.price}
+                    onChange={(e) => handleRowChange(row.id, 'price', e.target.value)}
+                    className="form-input"
+                    style={{ height: '34px', fontSize: '12px', padding: '0 8px', textAlign: 'right' }}
+                    required={idx === 0}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveRow(row.id)}
+                    style={{
+                      height: '34px',
+                      background: 'rgba(239, 68, 68, 0.15)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      color: '#f87171',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                    title="Remove row"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => handleAddRow()}
+                className="btn-secondary"
+                style={{ alignSelf: 'flex-start', padding: '5px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}
+              >
+                <Plus size={12} />
+                <span>Add Item Row</span>
+              </button>
+            </div>
+
+            {/* Financial Summary Strip */}
+            <div style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-dim)', marginBottom: '4px' }}>
+                <span>Subtotal:</span>
+                <span style={{ fontWeight: '700', color: 'var(--text-main)' }}>Rs. {subtotal.toLocaleString()}</span>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--text-dim)', marginBottom: '6px' }}>
+                <span>Supplier Discount (Rs):</span>
+                <input
+                  type="number"
+                  min="0"
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                  className="form-input"
+                  style={{ width: '90px', height: '26px', fontSize: '12px', textAlign: 'right', padding: '0 6px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: '800', color: '#34d399', borderTop: '1px solid var(--border-subtle)', paddingTop: '6px' }}>
+                <span>Net Purchase Total:</span>
+                <span>Rs. {netTotal.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Payment Status: Pending vs Paid */}
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-dim)', marginBottom: '5px' }}>Khata / Payable Status:</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setPaymentStatus('Pending')}
+                  style={{
+                    padding: '8px',
+                    borderRadius: '8px',
+                    border: paymentStatus === 'Pending' ? '2px solid #f59e0b' : '1px solid var(--border-subtle)',
+                    background: paymentStatus === 'Pending' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(0,0,0,0.3)',
+                    color: paymentStatus === 'Pending' ? '#fbbf24' : 'var(--text-muted)',
+                    fontWeight: '700',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '5px'
+                  }}
+                >
+                  <Clock size={13} />
+                  <span>Unpaid / Payable (Khata)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentStatus('Paid')}
+                  style={{
+                    padding: '8px',
+                    borderRadius: '8px',
+                    border: paymentStatus === 'Paid' ? '2px solid #10b981' : '1px solid var(--border-subtle)',
+                    background: paymentStatus === 'Paid' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(0,0,0,0.3)',
+                    color: paymentStatus === 'Paid' ? '#34d399' : 'var(--text-muted)',
+                    fontWeight: '700',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '5px'
+                  }}
+                >
+                  <CheckCircle size={13} />
+                  <span>Paid (Settled)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Payment Method Selector */}
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-dim)', marginBottom: '4px' }}>Paid / Transfer From:</label>
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                className="form-input"
+                style={{ width: '100%', height: '34px', fontSize: '12px' }}
+              >
+                {activeBanks.map((b) => (
+                  <option key={b.id} value={`Bank Transfer (${b.bankName})`}>
+                    {b.bankName} ({b.accountTitle})
+                  </option>
+                ))}
+                <option value="Cash">Cash</option>
+              </select>
+            </div>
+
+            {/* Form Actions */}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={() => setIsAddingPurchase(false)}
+                className="btn-secondary"
+                style={{ flex: 1, padding: '10px', fontSize: '12.5px' }}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="btn-gold"
+                style={{ flex: 2, padding: '10px', fontSize: '13px', background: 'linear-gradient(135deg, #10b981, #059669)', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              >
+                <Sparkles size={15} />
+                <span>Save Stock Voucher</span>
+              </button>
+            </div>
+          </form>
+        )}
+
         {/* List of Purchases for this Supplier */}
         <div>
           <div style={{ fontSize: '13px', fontWeight: '700', color: '#34d399', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>Purchase Vouchers ({supplier.purchases.length}):</span>
-            <span style={{ fontSize: '11px', color: 'var(--text-dim)', fontWeight: 'normal' }}>Tap Mark Paid to update status</span>
+            {!isAddingPurchase && (
+              <button
+                onClick={() => setIsAddingPurchase(true)}
+                className="btn-secondary"
+                style={{ padding: '3px 9px', fontSize: '11px', borderColor: '#10b981', color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Plus size={12} />
+                <span>+ Add Stock Bill</span>
+              </button>
+            )}
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginBottom: '8px' }}>
+            <span>Tap Mark Paid to update status</span>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '380px', overflowY: 'auto' }}>
