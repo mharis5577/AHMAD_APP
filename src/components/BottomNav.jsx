@@ -1,11 +1,12 @@
 import React from 'react';
-import { FileText, Receipt, BookOpen, Building2 } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Package, FileText, Building2 } from 'lucide-react';
 
-export default function BottomNav({ activeTab, setActiveTab, billsCount }) {
+export default function BottomNav({ activeTab, setActiveTab, billsCount, lowStockCount = 0 }) {
   const tabs = [
-    { id: 'pos', label: 'Create Bill', icon: FileText },
-    { id: 'bills', label: 'Bills', icon: Receipt, badge: billsCount },
-    { id: 'ledger', label: 'Ledger', icon: BookOpen },
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'ledger', label: 'Khata Ledger', icon: BookOpen },
+    { id: 'items', label: 'Items', icon: Package, badge: lowStockCount > 0 ? lowStockCount : undefined, badgeColor: '#fbbf24' },
+    { id: 'pos', label: 'Billing', icon: FileText, badge: billsCount },
     { id: 'banks', label: 'Bank A/C', icon: Building2 }
   ];
 
@@ -76,8 +77,8 @@ export default function BottomNav({ activeTab, setActiveTab, billsCount }) {
                       position: 'absolute',
                       top: '0px',
                       right: '6px',
-                      background: isActive ? 'var(--gold-primary)' : '#4a2b1b',
-                      color: isActive ? '#120904' : 'var(--text-main)',
+                      background: tab.badgeColor || (isActive ? 'var(--gold-primary)' : '#4a2b1b'),
+                      color: tab.badgeColor ? '#120904' : (isActive ? '#120904' : 'var(--text-main)'),
                       borderRadius: '10px',
                       padding: '1px 5px',
                       fontSize: '10px',

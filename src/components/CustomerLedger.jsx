@@ -1,19 +1,49 @@
 import React, { useState, useMemo } from 'react';
-import { Search, User, Phone, Share2, Building2, ChevronRight, Eye, Building, CreditCard, CheckCircle, Clock } from 'lucide-react';
+import { 
+  Search, 
+  User, 
+  Phone, 
+  Share2, 
+  Building2, 
+  ChevronRight, 
+  Eye, 
+  Building, 
+  CreditCard, 
+  CheckCircle, 
+  Clock, 
+  Plus, 
+  Trash2, 
+  Edit3, 
+  X,
+  DollarSign,
+  AlertTriangle,
+  BookOpen,
+  FileText,
+  Receipt
+} from 'lucide-react';
 import { BUSINESS_INFO, BANK_ACCOUNTS } from '../data/initialData';
 import CustomerLedgerModal from './CustomerLedgerModal';
 import SupplierLedgerModal from './SupplierLedgerModal';
+import { showAppAlert, showAppConfirm } from '../utils/dialog';
 
 export default function CustomerLedger({ 
   bills, 
   purchases = [], 
   banks,
+  parties = [],
+  payments = [],
+  onPaymentCreated,
+  onDeletePayment,
+  onResetPartyBalance,
   onUpdateBillStatus, 
   onUpdatePurchaseStatus, 
   onViewBill, 
   onViewPurchase,
   onBillCreated,
-  onPurchaseCreated
+  onPurchaseCreated,
+  onSaveParty,
+  onUpdateParty,
+  onDeleteParty
 }) {
   const [ledgerType, setLedgerType] = useState('customers'); // 'customers' or 'suppliers'
   const [search, setSearch] = useState('');
@@ -21,14 +51,50 @@ export default function CustomerLedger({
   const [selectedClientModal, setSelectedClientModal] = useState(null);
   const [selectedSupplierModal, setSelectedSupplierModal] = useState(null);
 
-  // Group bills by customer
+  // Add Party Modal State
+  const [isAddPartyOpen, setIsAddPartyOpen] = useState(false);
+  const [newPartyName, setNewPartyName] = useState('');
+  const [newPartyPhone, setNewPartyPhone] = useState('');
+  const [newPartyAddress, setNewPartyAddress] = useState('');
+  const [newPartyType, setNewPartyType] = useState('customer'); // 'customer' or 'supplier'
+  const [newPartyOpeningBal, setNewPartyOpeningBal] = useState('');
+  const [newPartyOpeningType, setNewPartyOpeningType] = useState('debit'); // 'debit' or 'credit'
+  const [newPartyBankName, setNewPartyBankName] = useState('');
+  const [newPartyAccountTitle, setNewPartyAccountTitle] = useState('');
+  const [newPartyAccountNo, setNewPartyAccountNo] = useState('');
+  const [newPartyIban, setNewPartyIban] = useState('');
+
+  // Group bills by customer (Merging persistent parties + dynamic bills)
   const customerLedgers = useMemo(() => {
     const map = new Map();
 
+    // 1. Seed with registered customer parties
+    parties.filter(p => p.type !== 'supplier').forEach(party => {
+      const key = (party.phone || party.name).toLowerCase().trim();
+      const opening = Number(party.openingBalance) || 0;
+      const openingType = party.openingBalanceType || 'debit';
+
+      map.set(key, {
+        key,
+        partyId: party.id,
+        name: party.name,
+        phone: party.phone || '',
+        address: party.address || '',
+        openingBalance: opening,
+        openingBalanceType: openingType,
+        bills: [],
+        totalBilled: 0,
+        totalPaid: 0,
+        // If debit, customer owes us (+). If credit, customer has advance credit (-)
+        totalDue: openingType === 'debit' ? opening : -opening
+      });
+    });
+
+    // 2. Aggregate bills
     bills.forEach(bill => {
       const name = (bill.customerName || 'Walk-in Customer').trim();
       const phone = (bill.customerPhone || '').trim();
-      const key = phone || name.toLowerCase();
+      const key = (phone || name).toLowerCase().trim();
 
       if (!map.has(key)) {
         map.set(key, {
@@ -36,6 +102,8 @@ export default function CustomerLedger({
           name,
           phone,
           address: bill.deliveryAddress || '',
+          openingBalance: 0,
+          openingBalanceType: 'debit',
           bills: [],
           totalBilled: 0,
           totalPaid: 0,
@@ -51,25 +119,91 @@ export default function CustomerLedger({
 
       const amount = Number(bill.netTotal) || 0;
       client.totalBilled += amount;
+      client.totalDue += amount; // All bills are Debits (sales)
+    });
 
-      if (bill.status === 'Paid') {
-        client.totalPaid += amount;
+    // 3. Aggregate payments received from customers
+    payments.filter(p => p.partyType !== 'supplier').forEach(pmt => {
+      const name = (pmt.partyName || '').trim();
+      const phone = (pmt.partyPhone || '').trim();
+      const partyId = pmt.partyId || '';
+
+      let client = null;
+      for (const c of map.values()) {
+        if ((partyId && c.partyId && c.partyId === partyId) ||
+            (phone && c.phone && c.phone === phone) ||
+            (name && c.name.toLowerCase().trim() === name.toLowerCase().trim())) {
+          client = c;
+          break;
+        }
+      }
+
+      if (!client) {
+        const key = (phone || name || pmt.id).toLowerCase().trim();
+        client = {
+          key,
+          partyId,
+          name: name || 'Customer',
+          phone,
+          address: '',
+          openingBalance: 0,
+          openingBalanceType: 'debit',
+          bills: [],
+          payments: [],
+          totalBilled: 0,
+          totalPaid: 0,
+          totalDue: 0
+        };
+        map.set(key, client);
+      }
+
+      if (!client.payments) client.payments = [];
+      client.payments.push(pmt);
+      const pAmt = Number(pmt.amount) || 0;
+      const isSend = pmt.paymentType === 'send';
+      if (isSend) {
+        client.totalDue += pAmt; // Refund/Send amount increases customer debit / reduces credit advance
       } else {
-        client.totalDue += amount;
+        client.totalPaid += pAmt;
+        client.totalDue -= pAmt;
       }
     });
 
     return Array.from(map.values());
-  }, [bills]);
+  }, [parties, bills, payments]);
 
-  // Group purchases by supplier
+  // Group purchases by supplier (Merging persistent parties + purchases + payments)
   const supplierLedgers = useMemo(() => {
     const map = new Map();
 
+    // 1. Seed with registered supplier parties
+    parties.filter(p => p.type !== 'customer').forEach(party => {
+      const key = (party.phone || party.name).toLowerCase().trim();
+      const opening = Number(party.openingBalance) || 0;
+      const openingType = party.openingBalanceType || 'credit';
+
+      map.set(key, {
+        key,
+        partyId: party.id,
+        name: party.name,
+        phone: party.phone || '',
+        bank: party.bank || {},
+        openingBalance: opening,
+        openingBalanceType: openingType,
+        purchases: [],
+        payments: [],
+        totalPurchased: 0,
+        totalPaid: 0,
+        // If credit, we owe supplier (+). If debit, we have advance debit (-)
+        totalPayable: openingType === 'credit' ? opening : -opening
+      });
+    });
+
+    // 2. Aggregate purchases
     purchases.forEach(pur => {
       const name = (pur.supplierName || 'Unknown Supplier').trim();
       const phone = (pur.supplierPhone || '').trim();
-      const key = phone || name.toLowerCase();
+      const key = (phone || name).toLowerCase().trim();
 
       if (!map.has(key)) {
         map.set(key, {
@@ -77,7 +211,10 @@ export default function CustomerLedger({
           name,
           phone,
           bank: pur.supplierBank || {},
+          openingBalance: 0,
+          openingBalanceType: 'credit',
           purchases: [],
+          payments: [],
           totalPurchased: 0,
           totalPaid: 0,
           totalPayable: 0
@@ -92,29 +229,97 @@ export default function CustomerLedger({
 
       const amount = Number(pur.netTotal) || 0;
       sup.totalPurchased += amount;
+      sup.totalPayable += amount; // All purchases are Credits (accounts payable)
+    });
 
-      if (pur.status === 'Paid') {
-        sup.totalPaid += amount;
-      } else {
-        sup.totalPayable += amount;
+    // 3. Aggregate payments paid to suppliers
+    payments.filter(p => p.partyType === 'supplier').forEach(pmt => {
+      const name = (pmt.partyName || '').trim();
+      const phone = (pmt.partyPhone || '').trim();
+      const partyId = pmt.partyId || '';
+
+      let sup = null;
+      for (const s of map.values()) {
+        if ((partyId && s.partyId && s.partyId === partyId) ||
+            (phone && s.phone && s.phone === phone) ||
+            (name && s.name.toLowerCase().trim() === name.toLowerCase().trim())) {
+          sup = s;
+          break;
+        }
       }
+
+      if (!sup) {
+        const key = (phone || name || pmt.id).toLowerCase().trim();
+        sup = {
+          key,
+          partyId,
+          name: name || 'Supplier',
+          phone,
+          bank: {},
+          openingBalance: 0,
+          openingBalanceType: 'credit',
+          purchases: [],
+          payments: [],
+          totalPurchased: 0,
+          totalPaid: 0,
+          totalPayable: 0
+        };
+        map.set(key, sup);
+      }
+
+      if (!sup.payments) sup.payments = [];
+      sup.payments.push(pmt);
+      const pAmt = Number(pmt.amount) || 0;
+      sup.totalPaid += pAmt;
+      sup.totalPayable -= pAmt;
     });
 
     return Array.from(map.values());
-  }, [purchases]);
+  }, [parties, purchases, payments]);
 
-  // Overall Financial Summary
+  // Financial Grand Totals factoring previous balances
   const grandTotals = useMemo(() => {
-    const totalSales = bills.reduce((sum, b) => sum + (Number(b.netTotal) || 0), 0);
-    const salesReceived = bills.filter(b => b.status === 'Paid').reduce((sum, b) => sum + (Number(b.netTotal) || 0), 0);
-    const salesDue = bills.filter(b => b.status === 'Pending').reduce((sum, b) => sum + (Number(b.netTotal) || 0), 0);
+    let salesDue = 0;
+    let customerAdvances = 0;
+    let totalSales = 0;
+    let salesReceived = 0;
 
-    const totalPurchases = purchases.reduce((sum, p) => sum + (Number(p.netTotal) || 0), 0);
-    const purchasesPaid = purchases.filter(p => p.status === 'Paid').reduce((sum, p) => sum + (Number(p.netTotal) || 0), 0);
-    const purchasesPayable = purchases.filter(p => p.status === 'Pending').reduce((sum, p) => sum + (Number(p.netTotal) || 0), 0);
+    customerLedgers.forEach(c => {
+      totalSales += c.totalBilled;
+      salesReceived += c.totalPaid;
+      if (c.totalDue > 0) {
+        salesDue += c.totalDue;
+      } else if (c.totalDue < 0) {
+        customerAdvances += Math.abs(c.totalDue);
+      }
+    });
 
-    return { totalSales, salesReceived, salesDue, totalPurchases, purchasesPaid, purchasesPayable };
-  }, [bills, purchases]);
+    let purchasesPayable = 0;
+    let supplierAdvances = 0;
+    let totalPurchases = 0;
+    let purchasesPaid = 0;
+
+    supplierLedgers.forEach(s => {
+      totalPurchases += s.totalPurchased;
+      purchasesPaid += s.totalPaid;
+      if (s.totalPayable > 0) {
+        purchasesPayable += s.totalPayable;
+      } else if (s.totalPayable < 0) {
+        supplierAdvances += Math.abs(s.totalPayable);
+      }
+    });
+
+    return { 
+      totalSales, 
+      salesReceived, 
+      salesDue, 
+      customerAdvances, 
+      totalPurchases, 
+      purchasesPaid, 
+      purchasesPayable,
+      supplierAdvances 
+    };
+  }, [customerLedgers, supplierLedgers]);
 
   // Filtered customer list
   const filteredCustomers = useMemo(() => {
@@ -123,7 +328,7 @@ export default function CustomerLedger({
       const matchesSearch = c.name.toLowerCase().includes(q) || c.phone.includes(q);
       const matchesFilter =
         filter === 'All' ||
-        (filter === 'Unpaid' && c.totalDue > 0) ||
+        (filter === 'Unpaid' && c.totalDue !== 0) ||
         (filter === 'Settled' && c.totalDue === 0);
 
       return matchesSearch && matchesFilter;
@@ -137,12 +342,147 @@ export default function CustomerLedger({
       const matchesSearch = s.name.toLowerCase().includes(q) || s.phone.includes(q);
       const matchesFilter =
         filter === 'All' ||
-        (filter === 'Unpaid' && s.totalPayable > 0) ||
+        (filter === 'Unpaid' && s.totalPayable !== 0) ||
         (filter === 'Settled' && s.totalPayable === 0);
 
       return matchesSearch && matchesFilter;
     });
   }, [supplierLedgers, search, filter]);
+
+  // Chronological unified Daybook Ledger (All Transactions: Bills, Purchases & Payments)
+  const masterLedgerRows = useMemo(() => {
+    const list = [];
+
+    // Add customer opening balances & sales
+    customerLedgers.forEach(c => {
+      if (c.openingBalance > 0) {
+        list.push({
+          id: `op_cust_${c.key}`,
+          date: 'Opening',
+          rawDate: new Date(0),
+          party: c.name,
+          partyType: 'Customer',
+          clientRef: c,
+          particulars: `Previous Balance (${c.openingBalanceType})`,
+          ref: 'OPENING',
+          debit: c.openingBalanceType === 'debit' ? c.openingBalance : 0,
+          credit: c.openingBalanceType === 'credit' ? c.openingBalance : 0,
+          status: 'Carried',
+          category: 'Opening'
+        });
+      }
+
+      (c.bills || []).forEach(b => {
+        const net = Number(b.netTotal) || 0;
+        list.push({
+          id: `bill_${b.id}`,
+          date: new Date(b.date).toLocaleDateString('en-PK', { month: 'short', day: 'numeric', year: '2-digit' }),
+          rawDate: new Date(b.date),
+          party: c.name,
+          partyType: 'Customer',
+          clientRef: c,
+          billRef: b,
+          particulars: b.items?.map(i => `${i.qty}x ${i.name}`).join(', ') || 'Chocolate Order',
+          ref: `#${b.id}`,
+          debit: net,
+          credit: 0, // A sale bill is always a Debit
+          status: b.status,
+          category: 'Sale'
+        });
+      });
+    });
+
+    // Add supplier opening balances & purchases
+    supplierLedgers.forEach(s => {
+      if (s.openingBalance > 0) {
+        list.push({
+          id: `op_sup_${s.key}`,
+          date: 'Opening',
+          rawDate: new Date(0),
+          party: s.name,
+          partyType: 'Supplier',
+          supplierRef: s,
+          particulars: `Previous Balance (${s.openingBalanceType})`,
+          ref: 'OPENING',
+          debit: s.openingBalanceType === 'debit' ? s.openingBalance : 0,
+          credit: s.openingBalanceType === 'credit' ? s.openingBalance : 0,
+          status: 'Carried',
+          category: 'Opening'
+        });
+      }
+
+      (s.purchases || []).forEach(p => {
+        const net = Number(p.netTotal) || 0;
+        list.push({
+          id: `pur_${p.id}`,
+          date: new Date(p.date).toLocaleDateString('en-PK', { month: 'short', day: 'numeric', year: '2-digit' }),
+          rawDate: new Date(p.date),
+          party: s.name,
+          partyType: 'Supplier',
+          supplierRef: s,
+          purchaseRef: p,
+          particulars: p.items?.map(i => `${i.qty}x ${i.name}`).join(', ') || 'Stock Raw Materials',
+          ref: `#${p.id}`,
+          debit: 0, // A purchase is always a Credit
+          credit: net,
+          status: p.status,
+          category: 'Purchase'
+        });
+      });
+    });
+
+    // Add customer & supplier payment vouchers
+    payments.forEach(pmt => {
+      const isCustomer = pmt.partyType !== 'supplier';
+      const amt = Number(pmt.amount) || 0;
+      const matchedClient = isCustomer ? customerLedgers.find(c => c.name.toLowerCase().trim() === (pmt.partyName || '').toLowerCase().trim()) : null;
+      const matchedSupplier = !isCustomer ? supplierLedgers.find(s => s.name.toLowerCase().trim() === (pmt.partyName || '').toLowerCase().trim()) : null;
+
+      const isSend = pmt.paymentType === 'send';
+
+      list.push({
+        id: `pmt_${pmt.id}`,
+        date: new Date(pmt.date).toLocaleDateString('en-PK', { month: 'short', day: 'numeric', year: '2-digit' }),
+        rawDate: new Date(pmt.date),
+        party: pmt.partyName || (isCustomer ? 'Customer' : 'Supplier'),
+        partyType: isCustomer ? 'Customer' : 'Supplier',
+        clientRef: matchedClient,
+        supplierRef: matchedSupplier,
+        paymentRef: pmt,
+        particulars: isCustomer
+          ? (isSend
+              ? `Amount Sent / Refund (${pmt.paymentMethod || 'Cash'})${pmt.notes ? ` — ${pmt.notes}` : ''}`
+              : `Payment Received (${pmt.paymentMethod || 'Cash'})${pmt.notes ? ` — ${pmt.notes}` : ''}`)
+          : `Payment Made (${pmt.paymentMethod || 'Bank'})${pmt.notes ? ` — ${pmt.notes}` : ''}`,
+        ref: `#${pmt.id}`,
+        debit: isCustomer ? (isSend ? amt : 0) : amt, // Money paid to supplier or refund to customer is Debit
+        credit: isCustomer ? (isSend ? 0 : amt) : 0, // Money received from customer is Credit
+        status: 'Paid',
+        category: isCustomer ? (isSend ? 'Payment' : 'Receipt') : 'Payment'
+      });
+    });
+
+    return list.sort((a, b) => b.rawDate - a.rawDate);
+  }, [customerLedgers, supplierLedgers, payments]);
+
+  // Filtered master ledger
+  const filteredMasterLedger = useMemo(() => {
+    return masterLedgerRows.filter(r => {
+      const q = search.toLowerCase();
+      const matchesSearch = r.party.toLowerCase().includes(q) || 
+                            r.particulars.toLowerCase().includes(q) || 
+                            r.ref.toLowerCase().includes(q);
+      const matchesFilter = 
+        filter === 'All' ||
+        (filter === 'Unpaid' && (r.status === 'Pending' || r.status === 'Unpaid')) ||
+        (filter === 'Settled' && (r.status === 'Paid' || r.status === 'Received')) ||
+        (filter === 'Sales' && r.category === 'Sale') ||
+        (filter === 'Purchases' && r.category === 'Purchase') ||
+        (filter === 'Payments' && (r.category === 'Receipt' || r.category === 'Payment'));
+
+      return matchesSearch && matchesFilter;
+    });
+  }, [masterLedgerRows, search, filter]);
 
   const activeModalClient = useMemo(() => {
     if (!selectedClientModal) return null;
@@ -154,53 +494,184 @@ export default function CustomerLedger({
     return supplierLedgers.find(s => s.key === selectedSupplierModal.key) || selectedSupplierModal;
   }, [supplierLedgers, selectedSupplierModal]);
 
+  // Save new party
+  const handleSaveNewParty = (e) => {
+    e.preventDefault();
+    if (!newPartyName.trim()) {
+      showAppAlert({
+        title: 'Party Name Required',
+        message: 'Please enter a party name to save.',
+        type: 'warning'
+      });
+      return;
+    }
+
+    const openingBalNum = Number(newPartyOpeningBal) || 0;
+    const newParty = {
+      id: `pty_${Date.now()}`,
+      name: newPartyName.trim(),
+      phone: newPartyPhone.trim(),
+      address: newPartyAddress.trim(),
+      type: newPartyType,
+      openingBalance: openingBalNum,
+      openingBalanceType: newPartyOpeningType,
+      bank: newPartyType === 'supplier' ? {
+        bankName: newPartyBankName.trim(),
+        accountTitle: newPartyAccountTitle.trim(),
+        accountNo: newPartyAccountNo.trim(),
+        iban: newPartyIban.trim()
+      } : undefined,
+      createdAt: new Date().toISOString()
+    };
+
+    onSaveParty?.(newParty);
+
+    // Reset
+    setNewPartyName('');
+    setNewPartyPhone('');
+    setNewPartyAddress('');
+    setNewPartyOpeningBal('');
+    setNewPartyBankName('');
+    setNewPartyAccountTitle('');
+    setNewPartyAccountNo('');
+    setNewPartyIban('');
+    setIsAddPartyOpen(false);
+  };
+
+  // Safe delete check: Only allow when balance is Rs. 0
+  const handleDeletePartyCheck = (party, e) => {
+    e?.stopPropagation();
+    const balance = ledgerType === 'customers' ? party.totalDue : party.totalPayable;
+
+    if (balance !== 0) {
+      showAppAlert({
+        title: 'Cannot Delete Party',
+        type: 'warning',
+        buttonText: 'Understood',
+        message: `Party "${party.name}" has an active balance of Rs. ${Math.abs(balance).toLocaleString()} (${balance > 0 ? (ledgerType === 'customers' ? "You'll Get / Unpaid" : "You'll Give / Payable") : "Advance Credit"}).\n\nAs requested, a party can ONLY be deleted when their account balance is completely cleared (Rs. 0). Please settle their balance first.`
+      });
+      return;
+    }
+
+    showAppConfirm({
+      title: 'Delete Cleared Party?',
+      message: `Are you sure you want to delete "${party.name}"?\nAccount balance is fully cleared (Rs. 0).`,
+      confirmText: 'Delete Party',
+      confirmStyle: 'danger',
+      onConfirm: () => {
+        onDeleteParty?.(party);
+        if (selectedClientModal?.key === party.key) setSelectedClientModal(null);
+        if (selectedSupplierModal?.key === party.key) setSelectedSupplierModal(null);
+      }
+    });
+  };
+
   return (
-    <div style={{ maxWidth: '750px', margin: '0 auto', padding: '14px 14px 40px 14px' }}>
+    <div style={{ maxWidth: '850px', margin: '0 auto', padding: '14px 14px 80px 14px' }}>
       
-      {/* LEDGER TYPE SWITCHER (Customers vs Suppliers) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '14px' }}>
+      {/* Top Banner: Title & Add Party Button */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: 'var(--gold-light)' }}>
+            Parties & Udhar Khata
+          </h1>
+          <p style={{ margin: '2px 0 0 0', fontSize: '11px', color: 'var(--text-muted)' }}>
+            Manage customer receivables, supplier payables, and opening balances
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setNewPartyType(ledgerType === 'customers' ? 'customer' : 'supplier');
+            setNewPartyOpeningType(ledgerType === 'customers' ? 'debit' : 'credit');
+            setIsAddPartyOpen(true);
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: 'linear-gradient(135deg, #e2b265, #ba8339)',
+            color: '#120904',
+            border: 'none',
+            borderRadius: '10px',
+            padding: '8px 14px',
+            fontSize: '12.5px',
+            fontWeight: '800',
+            cursor: 'pointer'
+          }}
+        >
+          <Plus size={15} strokeWidth={2.5} />
+          <span>+ Add Party</span>
+        </button>
+      </div>
+
+      {/* LEDGER TYPE SWITCHER (Customers vs Suppliers vs Master Daybook) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginBottom: '14px' }}>
         <button
           type="button"
           onClick={() => { setLedgerType('customers'); setFilter('All'); }}
           style={{
-            padding: '12px 8px',
+            padding: '10px 4px',
             borderRadius: '12px',
             border: ledgerType === 'customers' ? '2px solid var(--gold-primary)' : '1px solid var(--border-subtle)',
             background: ledgerType === 'customers' ? 'rgba(212, 163, 89, 0.22)' : 'rgba(24, 13, 8, 0.7)',
             color: ledgerType === 'customers' ? 'var(--gold-light)' : 'var(--text-muted)',
-            fontSize: '13px',
+            fontSize: '12px',
             fontWeight: '800',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: '8px'
+            gap: '5px'
           }}
         >
-          <User size={16} />
-          <span>Customer Khata (Receivable)</span>
+          <User size={14} />
+          <span>Customers</span>
         </button>
 
         <button
           type="button"
           onClick={() => { setLedgerType('suppliers'); setFilter('All'); }}
           style={{
-            padding: '12px 8px',
+            padding: '10px 4px',
             borderRadius: '12px',
             border: ledgerType === 'suppliers' ? '2px solid #10b981' : '1px solid var(--border-subtle)',
             background: ledgerType === 'suppliers' ? 'rgba(16, 185, 129, 0.22)' : 'rgba(24, 13, 8, 0.7)',
             color: ledgerType === 'suppliers' ? '#34d399' : 'var(--text-muted)',
-            fontSize: '13px',
+            fontSize: '12px',
             fontWeight: '800',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: '8px'
+            gap: '5px'
           }}
         >
-          <Building size={16} />
-          <span>Supplier Khata (Payable)</span>
+          <Building size={14} />
+          <span>Suppliers</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setLedgerType('master'); setFilter('All'); }}
+          style={{
+            padding: '10px 4px',
+            borderRadius: '12px',
+            border: ledgerType === 'master' ? '2px solid #60a5fa' : '1px solid var(--border-subtle)',
+            background: ledgerType === 'master' ? 'rgba(96, 165, 250, 0.22)' : 'rgba(24, 13, 8, 0.7)',
+            color: ledgerType === 'master' ? '#93c5fd' : 'var(--text-muted)',
+            fontSize: '12px',
+            fontWeight: '800',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '5px'
+          }}
+        >
+          <BookOpen size={14} />
+          <span>Daybook Ledger</span>
         </button>
       </div>
 
@@ -216,20 +687,25 @@ export default function CustomerLedger({
             </div>
 
             <div className="glass-card" style={{ padding: '12px 10px', textAlign: 'center', borderTop: '3px solid var(--status-paid)' }}>
-              <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Received</div>
+              <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Settled</div>
               <div style={{ fontSize: '15px', fontWeight: '800', color: '#34d399', marginTop: '3px' }}>
                 Rs. {grandTotals.salesReceived.toLocaleString()}
               </div>
             </div>
 
             <div className="glass-card" style={{ padding: '12px 10px', textAlign: 'center', borderTop: '3px solid var(--status-pending)' }}>
-              <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Receivable (Due)</div>
+              <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>You'll Get (Due)</div>
               <div style={{ fontSize: '15px', fontWeight: '800', color: '#fbbf24', marginTop: '3px' }}>
                 Rs. {grandTotals.salesDue.toLocaleString()}
               </div>
+              {grandTotals.customerAdvances > 0 && (
+                <div style={{ fontSize: '9.5px', color: '#60a5fa', marginTop: '2px' }}>
+                  Adv: Rs. {grandTotals.customerAdvances.toLocaleString()}
+                </div>
+              )}
             </div>
           </>
-        ) : (
+        ) : ledgerType === 'suppliers' ? (
           <>
             <div className="glass-card" style={{ padding: '12px 10px', textAlign: 'center', borderTop: '3px solid #10b981' }}>
               <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Total Purchases</div>
@@ -245,23 +721,54 @@ export default function CustomerLedger({
               </div>
             </div>
 
-            <div className="glass-card" style={{ padding: '12px 10px', textAlign: 'center', borderTop: '3px solid var(--status-pending)' }}>
-              <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Payable (Owed)</div>
-              <div style={{ fontSize: '15px', fontWeight: '800', color: '#fbbf24', marginTop: '3px' }}>
+            <div className="glass-card" style={{ padding: '12px 10px', textAlign: 'center', borderTop: '3px solid #ef4444' }}>
+              <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>You'll Give (Payable)</div>
+              <div style={{ fontSize: '15px', fontWeight: '800', color: '#f87171', marginTop: '3px' }}>
                 Rs. {grandTotals.purchasesPayable.toLocaleString()}
+              </div>
+              {grandTotals.supplierAdvances > 0 && (
+                <div style={{ fontSize: '9.5px', color: '#34d399', marginTop: '2px' }}>
+                  Adv: Rs. {grandTotals.supplierAdvances.toLocaleString()}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="glass-card" style={{ padding: '12px 10px', textAlign: 'center', borderTop: '3px solid var(--gold-primary)' }}>
+              <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Receivables</div>
+              <div style={{ fontSize: '15px', fontWeight: '800', color: '#fbbf24', marginTop: '3px' }}>
+                Rs. {grandTotals.salesDue.toLocaleString()}
+              </div>
+            </div>
+
+            <div className="glass-card" style={{ padding: '12px 10px', textAlign: 'center', borderTop: '3px solid #ef4444' }}>
+              <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Payables</div>
+              <div style={{ fontSize: '15px', fontWeight: '800', color: '#f87171', marginTop: '3px' }}>
+                Rs. {grandTotals.purchasesPayable.toLocaleString()}
+              </div>
+            </div>
+
+            <div className="glass-card" style={{ padding: '12px 10px', textAlign: 'center', borderTop: '3px solid #60a5fa' }}>
+              <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Net Khata</div>
+              <div style={{ fontSize: '15px', fontWeight: '800', color: '#93c5fd', marginTop: '3px' }}>
+                Rs. {(grandTotals.salesDue - grandTotals.purchasesPayable).toLocaleString()}
               </div>
             </div>
           </>
         )}
       </div>
 
-      {/* Search & Status Filter */}
-      <div className="glass-panel" style={{ padding: '12px', marginBottom: '14px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+      {/* Search & Status Filter Bar */}
+      <div className="glass-panel" style={{ padding: '10px 12px', marginBottom: '14px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: '180px' }}>
           <Search size={15} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '12px' }} />
           <input
             type="text"
-            placeholder={ledgerType === 'customers' ? 'Search customer name or phone...' : 'Search supplier or bank...'}
+            placeholder={
+              ledgerType === 'customers' ? 'Search customer name or phone...' :
+              (ledgerType === 'suppliers' ? 'Search supplier or bank...' : 'Search daybook by party, items, or ref #...')
+            }
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="form-input"
@@ -269,14 +776,14 @@ export default function CustomerLedger({
           />
         </div>
 
-        <div style={{ display: 'flex', gap: '6px' }}>
-          {['All', 'Unpaid', 'Settled'].map((f) => (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {(ledgerType === 'master' ? ['All', 'Sales', 'Purchases', 'Unpaid', 'Settled'] : ['All', 'Unpaid', 'Settled']).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
               style={{
-                background: filter === f ? (ledgerType === 'customers' ? 'var(--gold-primary)' : '#10b981') : 'rgba(255,255,255,0.05)',
-                color: filter === f ? '#120904' : 'var(--text-muted)',
+                background: filter === f ? (ledgerType === 'customers' ? 'var(--gold-primary)' : (ledgerType === 'suppliers' ? '#10b981' : '#3b82f6')) : 'rgba(255,255,255,0.05)',
+                color: filter === f ? (ledgerType === 'master' ? '#ffffff' : '#120904') : 'var(--text-muted)',
                 border: '1px solid var(--border-subtle)',
                 borderRadius: '8px',
                 padding: '6px 12px',
@@ -295,12 +802,16 @@ export default function CustomerLedger({
       {ledgerType === 'customers' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {filteredCustomers.length === 0 ? (
-            <div className="glass-card" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-dim)' }}>
-              No customer accounts found.
+            <div className="glass-card" style={{ padding: '36px 16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+              <User size={32} style={{ margin: '0 auto 8px auto', opacity: 0.3 }} />
+              <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-main)' }}>No Customer Accounts Found</div>
+              <div style={{ fontSize: '12px', marginTop: '4px' }}>Click "+ Add Party" above to create a customer khata with previous balance.</div>
             </div>
           ) : (
             filteredCustomers.map((client) => {
-              const hasDue = client.totalDue > 0;
+              const hasDue = client.totalDue !== 0;
+              const isPositive = client.totalDue > 0;
+
               return (
                 <div
                   key={client.key}
@@ -308,7 +819,7 @@ export default function CustomerLedger({
                   className="glass-card"
                   style={{
                     padding: '14px 16px',
-                    borderLeft: `4px solid ${hasDue ? '#f59e0b' : '#10b981'}`,
+                    borderLeft: `4px solid ${hasDue ? (isPositive ? '#f59e0b' : '#60a5fa') : '#10b981'}`,
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -317,32 +828,82 @@ export default function CustomerLedger({
                   }}
                 >
                   <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                       <User size={15} color="var(--gold-primary)" />
-                      <span style={{ fontSize: '14.5px', fontWeight: '700', color: 'var(--text-main)' }}>
+                      <span style={{ fontSize: '14.5px', fontWeight: '800', color: 'var(--text-main)' }}>
                         {client.name}
                       </span>
+                      {client.openingBalance > 0 && (
+                        <span style={{ fontSize: '10px', background: 'rgba(96, 165, 250, 0.15)', color: '#93c5fd', padding: '1px 6px', borderRadius: '6px', border: '1px solid rgba(96, 165, 250, 0.3)' }}>
+                          Prev Bal: Rs. {client.openingBalance.toLocaleString()} ({client.openingBalanceType})
+                        </span>
+                      )}
                     </div>
+                    
                     {client.phone && (
                       <div style={{ fontSize: '11px', color: 'var(--gold-light)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <Phone size={11} />
                         <span>{client.phone}</span>
                       </div>
                     )}
+                    
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
                       {client.bills.length} {client.bills.length === 1 ? 'order' : 'orders'} • Total: Rs. {client.totalBilled.toLocaleString()}
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-                        {hasDue ? 'Balance Due' : 'Status'}
+                        {hasDue ? (isPositive ? "You'll Get" : "Advance Credit") : 'Status'}
                       </div>
-                      <div style={{ fontSize: '15px', fontWeight: '800', color: hasDue ? '#fbbf24' : '#34d399', marginTop: '1px' }}>
-                        {hasDue ? `Rs. ${client.totalDue.toLocaleString()}` : 'Settled ✓'}
+                      <div style={{ fontSize: '15px', fontWeight: '800', color: hasDue ? (isPositive ? '#fbbf24' : '#60a5fa') : '#34d399', marginTop: '1px' }}>
+                        {hasDue ? (isPositive ? `Rs. ${client.totalDue.toLocaleString()}` : `Rs. ${Math.abs(client.totalDue).toLocaleString()}`) : 'Settled ✓'}
                       </div>
                     </div>
+
+                    {/* Quick View Khata Ledger button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedClientModal(client);
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        background: 'rgba(212, 163, 89, 0.15)',
+                        border: '1px solid rgba(212, 163, 89, 0.35)',
+                        color: 'var(--gold-light)',
+                        padding: '6px 9px',
+                        borderRadius: '8px',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      <BookOpen size={11} />
+                      <span>Ledger</span>
+                    </button>
+
+                    {/* Safe Delete button right on card */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeletePartyCheck(client, e)}
+                      title={client.totalDue === 0 ? "Delete customer (Account cleared)" : "Cannot delete: Outstanding balance active"}
+                      style={{
+                        background: client.totalDue === 0 ? 'rgba(239, 68, 68, 0.12)' : 'transparent',
+                        border: client.totalDue === 0 ? '1px solid rgba(239, 68, 68, 0.3)' : 'none',
+                        color: client.totalDue === 0 ? '#f87171' : 'var(--text-dim)',
+                        borderRadius: '8px',
+                        padding: '6px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
 
                     <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(212, 163, 89, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <ChevronRight size={16} color="var(--gold-primary)" />
@@ -359,12 +920,16 @@ export default function CustomerLedger({
       {ledgerType === 'suppliers' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {filteredSuppliers.length === 0 ? (
-            <div className="glass-card" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-dim)' }}>
-              No supplier accounts found.
+            <div className="glass-card" style={{ padding: '36px 16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+              <Building size={32} style={{ margin: '0 auto 8px auto', opacity: 0.3 }} />
+              <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-main)' }}>No Supplier Accounts Found</div>
+              <div style={{ fontSize: '12px', marginTop: '4px' }}>Click "+ Add Party" above to add a supplier with bank details and previous balance.</div>
             </div>
           ) : (
             filteredSuppliers.map((sup) => {
-              const hasPayable = sup.totalPayable > 0;
+              const hasPayable = sup.totalPayable !== 0;
+              const isPositive = sup.totalPayable > 0;
+
               return (
                 <div
                   key={sup.key}
@@ -372,7 +937,7 @@ export default function CustomerLedger({
                   className="glass-card"
                   style={{
                     padding: '14px 16px',
-                    borderLeft: `4px solid ${hasPayable ? '#f59e0b' : '#10b981'}`,
+                    borderLeft: `4px solid ${hasPayable ? (isPositive ? '#ef4444' : '#60a5fa') : '#10b981'}`,
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -381,11 +946,16 @@ export default function CustomerLedger({
                   }}
                 >
                   <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                       <Building size={15} color="#34d399" />
-                      <span style={{ fontSize: '14.5px', fontWeight: '700', color: 'var(--text-main)' }}>
+                      <span style={{ fontSize: '14.5px', fontWeight: '800', color: 'var(--text-main)' }}>
                         {sup.name}
                       </span>
+                      {sup.openingBalance > 0 && (
+                        <span style={{ fontSize: '10px', background: 'rgba(96, 165, 250, 0.15)', color: '#93c5fd', padding: '1px 6px', borderRadius: '6px', border: '1px solid rgba(96, 165, 250, 0.3)' }}>
+                          Prev Bal: Rs. {sup.openingBalance.toLocaleString()} ({sup.openingBalanceType})
+                        </span>
+                      )}
                     </div>
 
                     {sup.phone && (
@@ -396,21 +966,64 @@ export default function CustomerLedger({
                     )}
 
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                      {sup.purchases.length} {sup.purchases.length === 1 ? 'purchase' : 'purchases'} • Total: Rs. {sup.totalPurchased.toLocaleString()}
+                      {sup.purchases?.length || 0} purchases • Total: Rs. {sup.totalPurchased.toLocaleString()}
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-                        {hasPayable ? 'Balance Due' : 'Status'}
+                        {hasPayable ? (isPositive ? "You'll Give" : "Advance Debit") : 'Status'}
                       </div>
-                      <div style={{ fontSize: '15px', fontWeight: '800', color: hasPayable ? '#fbbf24' : '#34d399', marginTop: '1px' }}>
-                        {hasPayable ? `Rs. ${sup.totalPayable.toLocaleString()}` : 'Settled ✓'}
+                      <div style={{ fontSize: '15px', fontWeight: '800', color: hasPayable ? (isPositive ? '#f87171' : '#60a5fa') : '#34d399', marginTop: '1px' }}>
+                        {hasPayable ? (isPositive ? `Rs. ${sup.totalPayable.toLocaleString()}` : `Rs. ${Math.abs(sup.totalPayable).toLocaleString()}`) : 'Settled ✓'}
                       </div>
                     </div>
 
-                    <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {/* Quick View Khata Ledger button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedSupplierModal(sup);
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        background: 'rgba(16, 185, 129, 0.15)',
+                        border: '1px solid rgba(16, 185, 129, 0.35)',
+                        color: '#34d399',
+                        padding: '6px 9px',
+                        borderRadius: '8px',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      <BookOpen size={11} />
+                      <span>Ledger</span>
+                    </button>
+
+                    {/* Safe Delete button */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeletePartyCheck(sup, e)}
+                      title={sup.totalPayable === 0 ? "Delete supplier (Account cleared)" : "Cannot delete: Outstanding balance active"}
+                      style={{
+                        background: sup.totalPayable === 0 ? 'rgba(239, 68, 68, 0.12)' : 'transparent',
+                        border: sup.totalPayable === 0 ? '1px solid rgba(239, 68, 68, 0.3)' : 'none',
+                        color: sup.totalPayable === 0 ? '#f87171' : 'var(--text-dim)',
+                        borderRadius: '8px',
+                        padding: '6px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+
+                    <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <ChevronRight size={16} color="#34d399" />
                     </div>
                   </div>
@@ -421,27 +1034,422 @@ export default function CustomerLedger({
         </div>
       )}
 
-      {/* Customer Detail Window Modal */}
+      {/* 3. MASTER KHATA LEDGER / DAYBOOK VIEW */}
+      {ledgerType === 'master' && (
+        <div style={{
+          background: 'rgba(18, 10, 6, 0.92)',
+          border: '1px solid var(--gold-border)',
+          borderRadius: '14px',
+          overflow: 'hidden',
+          marginBottom: '16px'
+        }}>
+          <div style={{
+            padding: '12px 14px',
+            background: 'linear-gradient(135deg, rgba(38, 20, 12, 0.95), rgba(24, 13, 8, 0.98))',
+            borderBottom: '1px solid var(--gold-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '8px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <BookOpen size={17} color="var(--gold-primary)" />
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: '800', color: 'var(--gold-light)' }}>
+                  All-Transactions Master Khata Ledger
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                  Chronological unified register of customer sales, supplier procurement, and payments
+                </div>
+              </div>
+            </div>
+
+            <div style={{ fontSize: '11px', color: 'var(--gold-light)', background: 'rgba(212, 163, 89, 0.15)', padding: '3px 10px', borderRadius: '12px', border: '1px solid rgba(212, 163, 89, 0.3)' }}>
+              {filteredMasterLedger.length} entries
+            </div>
+          </div>
+
+          <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px', minWidth: '680px' }}>
+              <thead>
+                <tr style={{ background: 'rgba(30, 16, 10, 0.95)', borderBottom: '1px solid var(--gold-border)' }}>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--gold-light)', fontWeight: '700' }}>Date</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--gold-light)', fontWeight: '700' }}>Party</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--gold-light)', fontWeight: '700' }}>Particulars / Items</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--gold-light)', fontWeight: '700' }}>Voucher / Ref</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'right', color: '#fbbf24', fontWeight: '700' }}>Debit (Billed/Out)</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'right', color: '#34d399', fontWeight: '700' }}>Credit (Paid/In)</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--text-dim)', fontWeight: '700' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredMasterLedger.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                      No transactions recorded in the Daybook Ledger yet.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredMasterLedger.map((row, idx) => (
+                    <tr
+                      key={row.id + idx}
+                      style={{
+                        borderBottom: '1px solid rgba(255,255,255,0.05)',
+                        background: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'
+                      }}
+                    >
+                      <td style={{ padding: '8px', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+                        {row.date}
+                      </td>
+
+                      <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{
+                            fontSize: '9px',
+                            fontWeight: '700',
+                            padding: '1px 5px',
+                            borderRadius: '4px',
+                            background: row.partyType === 'Customer' ? 'rgba(212, 163, 89, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                            color: row.partyType === 'Customer' ? 'var(--gold-light)' : '#34d399',
+                            border: row.partyType === 'Customer' ? '1px solid rgba(212, 163, 89, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)'
+                          }}>
+                            {row.partyType}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (row.clientRef) setSelectedClientModal(row.clientRef);
+                              if (row.supplierRef) setSelectedSupplierModal(row.supplierRef);
+                            }}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text-main)',
+                              fontWeight: '700',
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                              textDecoration: 'underline'
+                            }}
+                            title={`Open ${row.party}'s Khata Ledger`}
+                          >
+                            {row.party}
+                          </button>
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '8px', color: 'var(--text-main)', maxWidth: '200px' }}>
+                        <div style={{ fontWeight: row.category === 'Opening' ? '700' : '400', color: row.category === 'Opening' ? '#93c5fd' : 'var(--text-main)' }}>
+                          {row.particulars}
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        {row.billRef ? (
+                          <button
+                            type="button"
+                            onClick={() => onViewBill(row.billRef)}
+                            style={{ background: 'transparent', border: 'none', color: 'var(--gold-primary)', cursor: 'pointer', textDecoration: 'underline', fontSize: '11px', fontWeight: '700' }}
+                          >
+                            {row.ref}
+                          </button>
+                        ) : row.purchaseRef ? (
+                          <button
+                            type="button"
+                            onClick={() => onViewPurchase(row.purchaseRef)}
+                            style={{ background: 'transparent', border: 'none', color: '#34d399', cursor: 'pointer', textDecoration: 'underline', fontSize: '11px', fontWeight: '700' }}
+                          >
+                            {row.ref}
+                          </button>
+                        ) : (
+                          <span style={{ color: 'var(--text-dim)' }}>{row.ref}</span>
+                        )}
+                      </td>
+
+                      <td style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: row.debit > 0 ? '#fbbf24' : 'var(--text-dim)' }}>
+                        {row.debit > 0 ? `Rs. ${row.debit.toLocaleString()}` : '-'}
+                      </td>
+
+                      <td style={{ padding: '8px', textAlign: 'right', fontWeight: '700', color: row.credit > 0 ? '#34d399' : 'var(--text-dim)' }}>
+                        {row.credit > 0 ? `Rs. ${row.credit.toLocaleString()}` : '-'}
+                      </td>
+
+                      <td style={{ padding: '8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        {row.status === 'Paid' ? (
+                          <span style={{ fontSize: '10px', color: '#34d399', background: 'rgba(16, 185, 129, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>
+                            Paid ✓
+                          </span>
+                        ) : row.status === 'Carried' ? (
+                          <span style={{ fontSize: '10px', color: '#60a5fa', background: 'rgba(96, 165, 250, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>
+                            Carried
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '10px', color: '#f87171', background: 'rgba(239, 68, 68, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>
+                            Unpaid ⏳
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ADD PARTY MODAL */}
+      {isAddPartyOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          zIndex: 100,
+          background: 'rgba(0,0,0,0.85)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px'
+        }}>
+          <div style={{
+            background: '#190e09',
+            border: '1px solid var(--gold-border)',
+            borderRadius: '16px',
+            padding: '20px',
+            width: '100%',
+            maxWidth: '480px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
+            boxShadow: '0 10px 40px rgba(0,0,0,0.8)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+              <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '800', color: 'var(--gold-light)' }}>
+                Add New Party (Customer / Supplier)
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsAddPartyOpen(false)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveNewParty} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              
+              {/* Type Switcher */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewPartyType('customer');
+                    setNewPartyOpeningType('debit');
+                  }}
+                  style={{
+                    padding: '8px',
+                    borderRadius: '8px',
+                    border: newPartyType === 'customer' ? '2px solid var(--gold-primary)' : '1px solid var(--border-subtle)',
+                    background: newPartyType === 'customer' ? 'rgba(226, 178, 101, 0.2)' : 'transparent',
+                    color: newPartyType === 'customer' ? 'var(--gold-light)' : 'var(--text-muted)',
+                    fontSize: '12px',
+                    fontWeight: '700',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Customer (Khata)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewPartyType('supplier');
+                    setNewPartyOpeningType('credit');
+                  }}
+                  style={{
+                    padding: '8px',
+                    borderRadius: '8px',
+                    border: newPartyType === 'supplier' ? '2px solid #10b981' : '1px solid var(--border-subtle)',
+                    background: newPartyType === 'supplier' ? 'rgba(16, 185, 129, 0.2)' : 'transparent',
+                    color: newPartyType === 'supplier' ? '#34d399' : 'var(--text-muted)',
+                    fontSize: '12px',
+                    fontWeight: '700',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Supplier (Vendor)
+                </button>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                  Party / Company Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder={newPartyType === 'customer' ? 'e.g. Kamran Shah' : 'e.g. Al-Madina Importers'}
+                  value={newPartyName}
+                  onChange={(e) => setNewPartyName(e.target.value)}
+                  style={{ width: '100%', background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '10px', padding: '10px', color: '#fff', fontSize: '13px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                  Phone / WhatsApp Number
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 03001234567"
+                  value={newPartyPhone}
+                  onChange={(e) => setNewPartyPhone(e.target.value)}
+                  style={{ width: '100%', background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '10px', padding: '10px', color: '#fff', fontSize: '13px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                  Address / City (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. DHA Phase 5, Lahore"
+                  value={newPartyAddress}
+                  onChange={(e) => setNewPartyAddress(e.target.value)}
+                  style={{ width: '100%', background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '10px', padding: '10px', color: '#fff', fontSize: '13px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              {/* PREVIOUS / OPENING BALANCE: Credit or Debit */}
+              <div style={{ background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                  <DollarSign size={14} color="var(--gold-primary)" />
+                  <label style={{ fontSize: '11px', fontWeight: '800', color: 'var(--gold-light)' }}>
+                    Previous Balance (Credit or Debit)
+                  </label>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '8px' }}>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Previous Amount (Rs.)"
+                    value={newPartyOpeningBal}
+                    onChange={(e) => setNewPartyOpeningBal(e.target.value)}
+                    style={{ background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '13px', fontWeight: '700' }}
+                  />
+
+                  <select
+                    value={newPartyOpeningType}
+                    onChange={(e) => setNewPartyOpeningType(e.target.value)}
+                    style={{ background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '12px', fontWeight: '700' }}
+                  >
+                    {newPartyType === 'customer' ? (
+                      <>
+                        <option value="debit">Debit (You'll Get / Customer Owes)</option>
+                        <option value="credit">Credit (Advance Paid by Cust)</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="credit">Credit (You'll Give / Supplier Due)</option>
+                        <option value="debit">Debit (Advance Paid to Sup)</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: '4px' }}>
+                  {newPartyType === 'customer' ? (
+                    newPartyOpeningType === 'debit' 
+                      ? "• Debit: Customer owes money for past unpaid bills (Receivable)"
+                      : "• Credit: Customer deposited advance cash into store"
+                  ) : (
+                    newPartyOpeningType === 'credit'
+                      ? "• Credit: Store owes money to supplier for past purchases (Payable)"
+                      : "• Debit: Store deposited advance cash to supplier"
+                  )}
+                </div>
+              </div>
+
+              {/* Supplier Bank Details if Supplier */}
+              {newPartyType === 'supplier' && (
+                <div style={{ background: 'rgba(0,0,0,0.25)', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '11px', fontWeight: '700', color: '#34d399', marginBottom: '6px' }}>Supplier Bank Account (Optional)</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '6px' }}>
+                    <input
+                      type="text"
+                      placeholder="Bank (e.g. HBL)"
+                      value={newPartyBankName}
+                      onChange={(e) => setNewPartyBankName(e.target.value)}
+                      style={{ background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '12px' }}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Account Title"
+                      value={newPartyAccountTitle}
+                      onChange={(e) => setNewPartyAccountTitle(e.target.value)}
+                      style={{ background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '12px' }}
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="IBAN Number (e.g. PK...)"
+                    value={newPartyIban}
+                    onChange={(e) => setNewPartyIban(e.target.value)}
+                    style={{ width: '100%', background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '12px', boxSizing: 'border-box' }}
+                  />
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsAddPartyOpen(false)}
+                  style={{ flex: 1, padding: '10px', borderRadius: '10px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: '12px', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{ flex: 2, padding: '10px', borderRadius: '10px', background: 'linear-gradient(135deg, #e2b265, #ba8339)', border: 'none', color: '#120904', fontSize: '12px', fontWeight: '800', cursor: 'pointer' }}
+                >
+                  Create Party
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Customer Ledger Details */}
       {activeModalClient && (
         <CustomerLedgerModal
           client={activeModalClient}
           banks={banks}
           onClose={() => setSelectedClientModal(null)}
+          onPaymentCreated={onPaymentCreated}
+          onDeletePayment={onDeletePayment}
+          onResetPartyBalance={onResetPartyBalance}
           onUpdateBillStatus={onUpdateBillStatus}
           onViewBill={onViewBill}
           onBillCreated={onBillCreated}
+          onUpdateParty={onUpdateParty}
+          onDeleteParty={onDeleteParty}
         />
       )}
 
-      {/* Supplier Detail Window Modal */}
+      {/* MODAL: Supplier Ledger Details */}
       {activeModalSupplier && (
         <SupplierLedgerModal
           supplier={activeModalSupplier}
           banks={banks}
           onClose={() => setSelectedSupplierModal(null)}
+          onPaymentCreated={onPaymentCreated}
+          onDeletePayment={onDeletePayment}
+          onResetPartyBalance={onResetPartyBalance}
           onUpdatePurchaseStatus={onUpdatePurchaseStatus}
           onViewPurchase={onViewPurchase}
           onPurchaseCreated={onPurchaseCreated}
+          onUpdateParty={onUpdateParty}
+          onDeleteParty={onDeleteParty}
         />
       )}
 

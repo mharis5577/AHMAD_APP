@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Building2, Copy, Check, Share2, Edit2, Plus, Trash2, RotateCcw, X, Save, Eye, Sparkles } from 'lucide-react';
 import { BUSINESS_INFO, BANK_ACCOUNTS as DEFAULT_BANKS } from '../data/initialData';
 import { shareBillText } from '../utils/shareUtils';
+import { showAppAlert, showAppConfirm } from '../utils/dialog';
 
 const COMMON_BANKS = [
   { name: 'Meezan Bank', code: 'MEZN' },
@@ -101,7 +102,11 @@ export default function BankAccountsCard({ banks = DEFAULT_BANKS, onUpdateBanks 
   const handleSaveForm = (e) => {
     e.preventDefault();
     if (!bankName.trim() || !accountTitle.trim() || !iban.trim()) {
-      alert('Please fill in Bank Name, Account Title, and IBAN!');
+      showAppAlert({
+        title: 'Missing Bank Details',
+        message: 'Please fill in Bank Name, Account Title, and IBAN.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -130,21 +135,37 @@ export default function BankAccountsCard({ banks = DEFAULT_BANKS, onUpdateBanks 
 
   const handleDeleteBank = (id, name) => {
     if (banks.length <= 1) {
-      alert('You must keep at least one official bank account on file!');
+      showAppAlert({
+        title: 'Account Required',
+        message: 'You must keep at least one official bank account on file.',
+        type: 'warning'
+      });
       return;
     }
-    if (window.confirm(`Delete bank account "${name}"?`)) {
-      const updatedList = banks.filter(b => b.id !== id);
-      onUpdateBanks?.(updatedList);
-      showToast(`Removed "${name}" from accounts`);
-    }
+    showAppConfirm({
+      title: 'Delete Bank Account?',
+      message: `Are you sure you want to remove "${name}" from official accounts?`,
+      confirmText: 'Delete Account',
+      confirmStyle: 'danger',
+      onConfirm: () => {
+        const updatedList = banks.filter(b => b.id !== id);
+        onUpdateBanks?.(updatedList);
+        showToast(`Removed "${name}" from accounts`);
+      }
+    });
   };
 
   const handleResetToDefaults = () => {
-    if (window.confirm('Reset all official bank accounts back to default (Meezan, Dubai Islamic, UBL)?')) {
-      onUpdateBanks?.(DEFAULT_BANKS);
-      showToast('✓ Reset to original official bank accounts');
-    }
+    showAppConfirm({
+      title: 'Reset Official Banks?',
+      message: 'Reset all official bank accounts back to default (Meezan, Dubai Islamic, UBL)?',
+      confirmText: 'Reset to Defaults',
+      confirmStyle: 'primary',
+      onConfirm: () => {
+        onUpdateBanks?.(DEFAULT_BANKS);
+        showToast('✓ Reset to original official bank accounts');
+      }
+    });
   };
 
   return (

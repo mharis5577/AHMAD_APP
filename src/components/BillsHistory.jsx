@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Receipt, CheckCircle, Clock, Eye, Trash2, RotateCcw } from 'lucide-react';
+import { showAppConfirm } from '../utils/dialog';
 
 export default function BillsHistory({ bills, onUpdateBillStatus, onDeleteBill, onViewBill, onLoadDemoBills }) {
   const [search, setSearch] = useState('');
@@ -102,22 +103,6 @@ export default function BillsHistory({ bills, onUpdateBillStatus, onDeleteBill, 
               {status}
             </button>
           ))}
-
-          {onLoadDemoBills && (
-            <button
-              onClick={() => {
-                if (window.confirm('Load 10 realistic demo bills for testing?')) {
-                  onLoadDemoBills();
-                }
-              }}
-              className="btn-secondary"
-              style={{ padding: '6px 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
-              title="Load 10 demo testing bills"
-            >
-              <RotateCcw size={12} color="var(--gold-light)" />
-              <span>Load Demo</span>
-            </button>
-          )}
         </div>
 
       </div>
@@ -127,16 +112,8 @@ export default function BillsHistory({ bills, onUpdateBillStatus, onDeleteBill, 
         {filteredBills.length === 0 ? (
           <div className="glass-card" style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--text-dim)' }}>
             <Receipt size={32} style={{ margin: '0 auto 8px auto', opacity: 0.3 }} />
-            <p style={{ fontSize: '13px' }}>No bills found matching your filter</p>
-            {onLoadDemoBills && (
-              <button
-                onClick={onLoadDemoBills}
-                className="btn-gold"
-                style={{ marginTop: '12px', padding: '8px 16px', fontSize: '12px' }}
-              >
-                Load Demo Bills Now
-              </button>
-            )}
+            <p style={{ fontSize: '13px', margin: 0 }}>No bills recorded yet</p>
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Create a new customer sale bill to see it here.</p>
           </div>
         ) : (
           filteredBills.map((bill) => {
@@ -222,9 +199,13 @@ export default function BillsHistory({ bills, onUpdateBillStatus, onDeleteBill, 
 
                       <button 
                         onClick={() => {
-                          if (window.confirm(`Delete bill ${bill.id}?`)) {
-                            onDeleteBill(bill.id);
-                          }
+                          showAppConfirm({
+                            title: 'Delete Bill?',
+                            message: `Are you sure you want to delete invoice #${bill.id}?`,
+                            confirmText: 'Delete Bill',
+                            confirmStyle: 'danger',
+                            onConfirm: () => onDeleteBill(bill.id)
+                          });
                         }} 
                         className="btn-icon" 
                         style={{ width: '30px', height: '30px', color: '#ef4444' }}

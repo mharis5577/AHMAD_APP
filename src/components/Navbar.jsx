@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { FileText, Receipt, BookOpen, Building2, Download, Upload, Phone } from 'lucide-react';
 import { BUSINESS_INFO } from '../data/initialData';
 import { exportAllDataJSON, importAllDataJSON } from '../utils/storage';
+import { showAppAlert } from '../utils/dialog';
 
 export default function Navbar({ activeTab, setActiveTab, billsCount, onDataReloaded }) {
   const fileInputRef = useRef(null);
@@ -16,10 +17,20 @@ export default function Navbar({ activeTab, setActiveTab, billsCount, onDataRelo
       importAllDataJSON(
         file,
         () => {
-          alert('Data restored successfully!');
+          showAppAlert({
+            title: 'Restore Completed',
+            message: 'Data restored successfully!',
+            type: 'success'
+          });
           onDataReloaded?.();
         },
-        (err) => alert(err)
+        (err) => {
+          showAppAlert({
+            title: 'Restore Failed',
+            message: String(err),
+            type: 'error'
+          });
+        }
       );
     }
   };
