@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { 
   Search, 
   User, 
@@ -19,12 +19,16 @@ import {
   AlertTriangle,
   BookOpen,
   FileText,
-  Receipt
+  Receipt,
+  Download,
+  Upload
 } from 'lucide-react';
 import { BUSINESS_INFO, BANK_ACCOUNTS } from '../data/initialData';
 import CustomerLedgerModal from './CustomerLedgerModal';
 import SupplierLedgerModal from './SupplierLedgerModal';
 import { showAppAlert, showAppConfirm } from '../utils/dialog';
+import { normalizePhone, matchesParty, computeCustomerTotals, computeSupplierTotals } from '../utils/partyMatcher';
+import { exportAllDataJSON, importAllDataJSON } from '../utils/storage';
 
 export default function CustomerLedger({ 
   bills, 
@@ -43,13 +47,49 @@ export default function CustomerLedger({
   onPurchaseCreated,
   onSaveParty,
   onUpdateParty,
-  onDeleteParty
+  onDeleteParty,
+  onDataReloaded
 }) {
   const [ledgerType, setLedgerType] = useState('customers'); // 'customers' or 'suppliers'
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('All'); // 'All', 'Unpaid', 'Settled'
   const [selectedClientModal, setSelectedClientModal] = useState(null);
   const [selectedSupplierModal, setSelectedSupplierModal] = useState(null);
+
+  const backupInputRef = useRef(null);
+
+  const handleBackupFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      showAppConfirm({
+        title: 'Restore Data Backup?',
+        message: 'Restoring a backup will merge and update your bills, purchases, khata parties, and payments from the backup file.\n\nDo you want to proceed?',
+        confirmText: 'Yes, Restore',
+        confirmStyle: 'primary',
+        onConfirm: () => {
+          importAllDataJSON(
+            file,
+            () => {
+              showAppAlert({
+                title: 'Data Restored Successfully! 📦',
+                message: 'All your bills, items, and khata records have been restored cleanly.',
+                type: 'success'
+              });
+              onDataReloaded?.();
+            },
+            (err) => {
+              showAppAlert({
+                title: 'Restore Failed',
+                message: String(err),
+                type: 'error'
+              });
+            }
+          );
+        }
+      });
+      e.target.value = '';
+    }
+  };
 
   // Add Party Modal State
   const [isAddPartyOpen, setIsAddPartyOpen] = useState(false);
@@ -64,217 +104,176 @@ export default function CustomerLedger({
   const [newPartyAccountNo, setNewPartyAccountNo] = useState('');
   const [newPartyIban, setNewPartyIban] = useState('');
 
-  // Group bills by customer (Merging persistent parties + dynamic bills)
+  // Group bills by customer (Merging persistent parties + dynamic bills with robust deduplication)
   const customerLedgers = useMemo(() => {
-    const map = new Map();
+    const list = [];
 
     // 1. Seed with registered customer parties
     parties.filter(p => p.type !== 'supplier').forEach(party => {
-      const key = (party.phone || party.name).toLowerCase().trim();
       const opening = Number(party.openingBalance) || 0;
       const openingType = party.openingBalanceType || 'debit';
 
-      map.set(key, {
-        key,
+      list.push({
         partyId: party.id,
+        id: party.id,
         name: party.name,
         phone: party.phone || '',
         address: party.address || '',
         openingBalance: opening,
         openingBalanceType: openingType,
         bills: [],
-        totalBilled: 0,
-        totalPaid: 0,
-        // If debit, customer owes us (+). If credit, customer has advance credit (-)
-        totalDue: openingType === 'debit' ? opening : -opening
+        payments: []
       });
     });
 
-    // 2. Aggregate bills
+    // 2. Aggregate bills into matching party or create new if not found
     bills.forEach(bill => {
-      const name = (bill.customerName || 'Walk-in Customer').trim();
-      const phone = (bill.customerPhone || '').trim();
-      const key = (phone || name).toLowerCase().trim();
+      let client = list.find(c => matchesParty(bill, c));
 
-      if (!map.has(key)) {
-        map.set(key, {
-          key,
-          name,
-          phone,
-          address: bill.deliveryAddress || '',
+      if (!client) {
+        client = {
+          partyId: bill.partyId || `cust_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          id: bill.partyId || '',
+          name: (bill.customerName || 'Walk-in Customer').trim(),
+          phone: (bill.customerPhone || '').trim(),
+          address: (bill.deliveryAddress || '').trim(),
           openingBalance: 0,
           openingBalanceType: 'debit',
           bills: [],
-          totalBilled: 0,
-          totalPaid: 0,
-          totalDue: 0
-        });
+          payments: []
+        };
+        list.push(client);
       }
 
-      const client = map.get(key);
       client.bills.push(bill);
-      if (!client.address && bill.deliveryAddress) {
-        client.address = bill.deliveryAddress;
+      if (!client.phone && bill.customerPhone) {
+        client.phone = bill.customerPhone.trim();
       }
-
-      const amount = Number(bill.netTotal) || 0;
-      client.totalBilled += amount;
-      client.totalDue += amount; // All bills are Debits (sales)
+      if (!client.address && bill.deliveryAddress) {
+        client.address = bill.deliveryAddress.trim();
+      }
     });
 
     // 3. Aggregate payments received from customers
     payments.filter(p => p.partyType !== 'supplier').forEach(pmt => {
-      const name = (pmt.partyName || '').trim();
-      const phone = (pmt.partyPhone || '').trim();
-      const partyId = pmt.partyId || '';
-
-      let client = null;
-      for (const c of map.values()) {
-        if ((partyId && c.partyId && c.partyId === partyId) ||
-            (phone && c.phone && c.phone === phone) ||
-            (name && c.name.toLowerCase().trim() === name.toLowerCase().trim())) {
-          client = c;
-          break;
-        }
-      }
+      let client = list.find(c => matchesParty(pmt, c));
 
       if (!client) {
-        const key = (phone || name || pmt.id).toLowerCase().trim();
         client = {
-          key,
-          partyId,
-          name: name || 'Customer',
-          phone,
+          partyId: pmt.partyId || `cust_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          id: pmt.partyId || '',
+          name: (pmt.partyName || 'Customer').trim(),
+          phone: (pmt.partyPhone || '').trim(),
           address: '',
           openingBalance: 0,
           openingBalanceType: 'debit',
           bills: [],
-          payments: [],
-          totalBilled: 0,
-          totalPaid: 0,
-          totalDue: 0
+          payments: []
         };
-        map.set(key, client);
+        list.push(client);
       }
 
-      if (!client.payments) client.payments = [];
       client.payments.push(pmt);
-      const pAmt = Number(pmt.amount) || 0;
-      const isSend = pmt.paymentType === 'send';
-      if (isSend) {
-        client.totalDue += pAmt; // Refund/Send amount increases customer debit / reduces credit advance
-      } else {
-        client.totalPaid += pAmt;
-        client.totalDue -= pAmt;
+      if (!client.phone && pmt.partyPhone) {
+        client.phone = pmt.partyPhone.trim();
       }
     });
 
-    return Array.from(map.values());
+    // 4. Compute pure double-entry totals for every customer
+    return list.map(c => {
+      const totals = computeCustomerTotals(c);
+      return {
+        ...c,
+        ...totals,
+        key: c.partyId || c.id || (c.phone || c.name).toLowerCase().trim()
+      };
+    });
   }, [parties, bills, payments]);
 
-  // Group purchases by supplier (Merging persistent parties + purchases + payments)
+  // Group purchases by supplier (Merging persistent parties + purchases + payments with robust deduplication)
   const supplierLedgers = useMemo(() => {
-    const map = new Map();
+    const list = [];
 
     // 1. Seed with registered supplier parties
     parties.filter(p => p.type !== 'customer').forEach(party => {
-      const key = (party.phone || party.name).toLowerCase().trim();
       const opening = Number(party.openingBalance) || 0;
       const openingType = party.openingBalanceType || 'credit';
 
-      map.set(key, {
-        key,
+      list.push({
         partyId: party.id,
+        id: party.id,
         name: party.name,
         phone: party.phone || '',
         bank: party.bank || {},
         openingBalance: opening,
         openingBalanceType: openingType,
         purchases: [],
-        payments: [],
-        totalPurchased: 0,
-        totalPaid: 0,
-        // If credit, we owe supplier (+). If debit, we have advance debit (-)
-        totalPayable: openingType === 'credit' ? opening : -opening
+        payments: []
       });
     });
 
     // 2. Aggregate purchases
     purchases.forEach(pur => {
-      const name = (pur.supplierName || 'Unknown Supplier').trim();
-      const phone = (pur.supplierPhone || '').trim();
-      const key = (phone || name).toLowerCase().trim();
+      let sup = list.find(s => matchesParty(pur, s));
 
-      if (!map.has(key)) {
-        map.set(key, {
-          key,
-          name,
-          phone,
+      if (!sup) {
+        sup = {
+          partyId: pur.supplierId || pur.partyId || `sup_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          id: pur.supplierId || pur.partyId || '',
+          name: (pur.supplierName || 'Unknown Supplier').trim(),
+          phone: (pur.supplierPhone || '').trim(),
           bank: pur.supplierBank || {},
           openingBalance: 0,
           openingBalanceType: 'credit',
           purchases: [],
-          payments: [],
-          totalPurchased: 0,
-          totalPaid: 0,
-          totalPayable: 0
-        });
+          payments: []
+        };
+        list.push(sup);
       }
 
-      const sup = map.get(key);
       sup.purchases.push(pur);
+      if (!sup.phone && pur.supplierPhone) {
+        sup.phone = pur.supplierPhone.trim();
+      }
       if (!sup.bank?.bankName && pur.supplierBank?.bankName) {
         sup.bank = pur.supplierBank;
       }
-
-      const amount = Number(pur.netTotal) || 0;
-      sup.totalPurchased += amount;
-      sup.totalPayable += amount; // All purchases are Credits (accounts payable)
     });
 
     // 3. Aggregate payments paid to suppliers
     payments.filter(p => p.partyType === 'supplier').forEach(pmt => {
-      const name = (pmt.partyName || '').trim();
-      const phone = (pmt.partyPhone || '').trim();
-      const partyId = pmt.partyId || '';
-
-      let sup = null;
-      for (const s of map.values()) {
-        if ((partyId && s.partyId && s.partyId === partyId) ||
-            (phone && s.phone && s.phone === phone) ||
-            (name && s.name.toLowerCase().trim() === name.toLowerCase().trim())) {
-          sup = s;
-          break;
-        }
-      }
+      let sup = list.find(s => matchesParty(pmt, s));
 
       if (!sup) {
-        const key = (phone || name || pmt.id).toLowerCase().trim();
         sup = {
-          key,
-          partyId,
-          name: name || 'Supplier',
-          phone,
+          partyId: pmt.partyId || `sup_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          id: pmt.partyId || '',
+          name: (pmt.partyName || 'Supplier').trim(),
+          phone: (pmt.partyPhone || '').trim(),
           bank: {},
           openingBalance: 0,
           openingBalanceType: 'credit',
           purchases: [],
-          payments: [],
-          totalPurchased: 0,
-          totalPaid: 0,
-          totalPayable: 0
+          payments: []
         };
-        map.set(key, sup);
+        list.push(sup);
       }
 
-      if (!sup.payments) sup.payments = [];
       sup.payments.push(pmt);
-      const pAmt = Number(pmt.amount) || 0;
-      sup.totalPaid += pAmt;
-      sup.totalPayable -= pAmt;
+      if (!sup.phone && pmt.partyPhone) {
+        sup.phone = pmt.partyPhone.trim();
+      }
     });
 
-    return Array.from(map.values());
+    // 4. Compute pure double-entry totals for every supplier
+    return list.map(s => {
+      const totals = computeSupplierTotals(s);
+      return {
+        ...s,
+        ...totals,
+        key: s.partyId || s.id || (s.phone || s.name).toLowerCase().trim()
+      };
+    });
   }, [parties, purchases, payments]);
 
   // Financial Grand Totals factoring previous balances
@@ -453,12 +452,14 @@ export default function CustomerLedger({
           ? (isSend
               ? `Amount Sent / Refund (${pmt.paymentMethod || 'Cash'})${pmt.notes ? ` — ${pmt.notes}` : ''}`
               : `Payment Received (${pmt.paymentMethod || 'Cash'})${pmt.notes ? ` — ${pmt.notes}` : ''}`)
-          : `Payment Made (${pmt.paymentMethod || 'Bank'})${pmt.notes ? ` — ${pmt.notes}` : ''}`,
+          : (pmt.paymentType === 'receive'
+              ? `Refund Received from Supplier (${pmt.paymentMethod || 'Cash'})${pmt.notes ? ` — ${pmt.notes}` : ''}`
+              : `Payment Made (${pmt.paymentMethod || 'Bank'})${pmt.notes ? ` — ${pmt.notes}` : ''}`),
         ref: `#${pmt.id}`,
-        debit: isCustomer ? (isSend ? amt : 0) : amt, // Money paid to supplier or refund to customer is Debit
-        credit: isCustomer ? (isSend ? 0 : amt) : 0, // Money received from customer is Credit
+        debit: isCustomer ? (isSend ? amt : 0) : (pmt.paymentType === 'receive' ? 0 : amt),
+        credit: isCustomer ? (isSend ? 0 : amt) : (pmt.paymentType === 'receive' ? amt : 0),
         status: 'Paid',
-        category: isCustomer ? (isSend ? 'Payment' : 'Receipt') : 'Payment'
+        category: isCustomer ? (isSend ? 'Payment' : 'Receipt') : (pmt.paymentType === 'receive' ? 'Receipt' : 'Payment')
       });
     });
 
@@ -486,12 +487,22 @@ export default function CustomerLedger({
 
   const activeModalClient = useMemo(() => {
     if (!selectedClientModal) return null;
-    return customerLedgers.find(c => c.key === selectedClientModal.key) || selectedClientModal;
+    return customerLedgers.find(c => 
+      (selectedClientModal.partyId && c.partyId === selectedClientModal.partyId) ||
+      (selectedClientModal.id && c.id === selectedClientModal.id) ||
+      c.key === selectedClientModal.key ||
+      c.name.toLowerCase().trim() === selectedClientModal.name.toLowerCase().trim()
+    ) || selectedClientModal;
   }, [customerLedgers, selectedClientModal]);
 
   const activeModalSupplier = useMemo(() => {
     if (!selectedSupplierModal) return null;
-    return supplierLedgers.find(s => s.key === selectedSupplierModal.key) || selectedSupplierModal;
+    return supplierLedgers.find(s => 
+      (selectedSupplierModal.partyId && s.partyId === selectedSupplierModal.partyId) ||
+      (selectedSupplierModal.id && s.id === selectedSupplierModal.id) ||
+      s.key === selectedSupplierModal.key ||
+      s.name.toLowerCase().trim() === selectedSupplierModal.name.toLowerCase().trim()
+    ) || selectedSupplierModal;
   }, [supplierLedgers, selectedSupplierModal]);
 
   // Save new party
@@ -580,30 +591,84 @@ export default function CustomerLedger({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setNewPartyType(ledgerType === 'customers' ? 'customer' : 'supplier');
-            setNewPartyOpeningType(ledgerType === 'customers' ? 'debit' : 'credit');
-            setIsAddPartyOpen(true);
-          }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            background: 'linear-gradient(135deg, #e2b265, #ba8339)',
-            color: '#120904',
-            border: 'none',
-            borderRadius: '10px',
-            padding: '8px 14px',
-            fontSize: '12.5px',
-            fontWeight: '800',
-            cursor: 'pointer'
-          }}
-        >
-          <Plus size={15} strokeWidth={2.5} />
-          <span>+ Add Party</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={exportAllDataJSON}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              background: 'rgba(255,255,255,0.06)',
+              color: 'var(--gold-light)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: '10px',
+              padding: '8px 12px',
+              fontSize: '12px',
+              fontWeight: '700',
+              cursor: 'pointer'
+            }}
+            title="Download JSON backup of all Khata records, bills, and items"
+          >
+            <Download size={13} color="var(--gold-primary)" />
+            <span>Backup</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => backupInputRef.current?.click()}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              background: 'rgba(255,255,255,0.06)',
+              color: 'var(--text-muted)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: '10px',
+              padding: '8px 12px',
+              fontSize: '12px',
+              fontWeight: '700',
+              cursor: 'pointer'
+            }}
+            title="Restore Khata records and bills from JSON backup"
+          >
+            <Upload size={13} />
+            <span>Restore</span>
+          </button>
+
+          <input
+            type="file"
+            ref={backupInputRef}
+            style={{ display: 'none' }}
+            accept=".json"
+            onChange={handleBackupFileChange}
+          />
+
+          <button
+            type="button"
+            onClick={() => {
+              setNewPartyType(ledgerType === 'customers' ? 'customer' : 'supplier');
+              setNewPartyOpeningType(ledgerType === 'customers' ? 'debit' : 'credit');
+              setIsAddPartyOpen(true);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: 'linear-gradient(135deg, #e2b265, #ba8339)',
+              color: '#120904',
+              border: 'none',
+              borderRadius: '10px',
+              padding: '8px 14px',
+              fontSize: '12.5px',
+              fontWeight: '800',
+              cursor: 'pointer'
+            }}
+          >
+            <Plus size={15} strokeWidth={2.5} />
+            <span>+ Add Party</span>
+          </button>
+        </div>
       </div>
 
       {/* LEDGER TYPE SWITCHER (Customers vs Suppliers vs Master Daybook) */}
@@ -835,7 +900,7 @@ export default function CustomerLedger({
                       </span>
                       {client.openingBalance > 0 && (
                         <span style={{ fontSize: '10px', background: 'rgba(96, 165, 250, 0.15)', color: '#93c5fd', padding: '1px 6px', borderRadius: '6px', border: '1px solid rgba(96, 165, 250, 0.3)' }}>
-                          Prev Bal: Rs. {client.openingBalance.toLocaleString()} ({client.openingBalanceType})
+                          Prev: Rs. {client.openingBalance.toLocaleString()} ({client.openingBalanceType === 'debit' ? "Customer Owes" : "Customer Advance"})
                         </span>
                       )}
                     </div>
@@ -855,10 +920,10 @@ export default function CustomerLedger({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-                        {hasDue ? (isPositive ? "You'll Get" : "Advance Credit") : 'Status'}
+                        {hasDue ? (isPositive ? "You'll Get" : "Customer Advance") : 'Status'}
                       </div>
                       <div style={{ fontSize: '15px', fontWeight: '800', color: hasDue ? (isPositive ? '#fbbf24' : '#60a5fa') : '#34d399', marginTop: '1px' }}>
-                        {hasDue ? (isPositive ? `Rs. ${client.totalDue.toLocaleString()}` : `Rs. ${Math.abs(client.totalDue).toLocaleString()}`) : 'Settled ✓'}
+                        {hasDue ? (isPositive ? `Rs. ${client.totalDue.toLocaleString()}` : `Rs. ${Math.abs(client.totalDue).toLocaleString()} (Adv)`) : 'Settled ✓'}
                       </div>
                     </div>
 
@@ -953,7 +1018,7 @@ export default function CustomerLedger({
                       </span>
                       {sup.openingBalance > 0 && (
                         <span style={{ fontSize: '10px', background: 'rgba(96, 165, 250, 0.15)', color: '#93c5fd', padding: '1px 6px', borderRadius: '6px', border: '1px solid rgba(96, 165, 250, 0.3)' }}>
-                          Prev Bal: Rs. {sup.openingBalance.toLocaleString()} ({sup.openingBalanceType})
+                          Prev: Rs. {sup.openingBalance.toLocaleString()} ({sup.openingBalanceType === 'credit' ? "Store Payable" : "Advance Paid"})
                         </span>
                       )}
                     </div>
@@ -973,10 +1038,10 @@ export default function CustomerLedger({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-                        {hasPayable ? (isPositive ? "You'll Give" : "Advance Debit") : 'Status'}
+                        {hasPayable ? (isPositive ? "You'll Give" : "Advance Paid") : 'Status'}
                       </div>
                       <div style={{ fontSize: '15px', fontWeight: '800', color: hasPayable ? (isPositive ? '#f87171' : '#60a5fa') : '#34d399', marginTop: '1px' }}>
-                        {hasPayable ? (isPositive ? `Rs. ${sup.totalPayable.toLocaleString()}` : `Rs. ${Math.abs(sup.totalPayable).toLocaleString()}`) : 'Settled ✓'}
+                        {hasPayable ? (isPositive ? `Rs. ${sup.totalPayable.toLocaleString()}` : `Rs. ${Math.abs(sup.totalPayable).toLocaleString()} (Adv)`) : 'Settled ✓'}
                       </div>
                     </div>
 
@@ -1078,8 +1143,8 @@ export default function CustomerLedger({
                   <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--gold-light)', fontWeight: '700' }}>Party</th>
                   <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--gold-light)', fontWeight: '700' }}>Particulars / Items</th>
                   <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--gold-light)', fontWeight: '700' }}>Voucher / Ref</th>
-                  <th style={{ padding: '10px 8px', textAlign: 'right', color: '#fbbf24', fontWeight: '700' }}>Debit (Billed/Out)</th>
-                  <th style={{ padding: '10px 8px', textAlign: 'right', color: '#34d399', fontWeight: '700' }}>Credit (Paid/In)</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'right', color: '#fbbf24', fontWeight: '700' }}>Billed / Out (Rs.)</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'right', color: '#34d399', fontWeight: '700' }}>Paid / In (Rs.)</th>
                   <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--text-dim)', fontWeight: '700' }}>Status</th>
                 </tr>
               </thead>
@@ -1319,20 +1384,20 @@ export default function CustomerLedger({
                 />
               </div>
 
-              {/* PREVIOUS / OPENING BALANCE: Credit or Debit */}
+              {/* PREVIOUS / OPENING BALANCE: Friendly & Clear */}
               <div style={{ background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
                   <DollarSign size={14} color="var(--gold-primary)" />
                   <label style={{ fontSize: '11px', fontWeight: '800', color: 'var(--gold-light)' }}>
-                    Previous Balance (Credit or Debit)
+                    Previous Balance (Past Udhaar / Advance)
                   </label>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '8px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.3fr', gap: '8px' }}>
                   <input
                     type="number"
                     min="0"
-                    placeholder="Previous Amount (Rs.)"
+                    placeholder="Amount (Rs.)"
                     value={newPartyOpeningBal}
                     onChange={(e) => setNewPartyOpeningBal(e.target.value)}
                     style={{ background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '13px', fontWeight: '700' }}
@@ -1345,26 +1410,26 @@ export default function CustomerLedger({
                   >
                     {newPartyType === 'customer' ? (
                       <>
-                        <option value="debit">Debit (You'll Get / Customer Owes)</option>
-                        <option value="credit">Credit (Advance Paid by Cust)</option>
+                        <option value="debit">Customer Owes You (Pending Dues)</option>
+                        <option value="credit">Customer Paid Advance (Deposit)</option>
                       </>
                     ) : (
                       <>
-                        <option value="credit">Credit (You'll Give / Supplier Due)</option>
-                        <option value="debit">Debit (Advance Paid to Sup)</option>
+                        <option value="credit">You Owe Supplier (Store Payable)</option>
+                        <option value="debit">Advance Paid to Supplier</option>
                       </>
                     )}
                   </select>
                 </div>
-                <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: '4px' }}>
+                <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: '5px', lineHeight: '1.4' }}>
                   {newPartyType === 'customer' ? (
                     newPartyOpeningType === 'debit' 
-                      ? "• Debit: Customer owes money for past unpaid bills (Receivable)"
-                      : "• Credit: Customer deposited advance cash into store"
+                      ? "👉 Customer owes past unpaid bills (Will be added to their due amount)."
+                      : "👉 Customer paid advance cash into store (Will be deducted from future orders)."
                   ) : (
                     newPartyOpeningType === 'credit'
-                      ? "• Credit: Store owes money to supplier for past purchases (Payable)"
-                      : "• Debit: Store deposited advance cash to supplier"
+                      ? "👉 Store owes past unpaid purchases to supplier (Will be added to payable)."
+                      : "👉 Store deposited advance payment to supplier."
                   )}
                 </div>
               </div>

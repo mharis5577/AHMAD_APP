@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Plus, Trash2, User, Sparkles, RefreshCw, Clock, CheckCircle, Building2, BookOpen, Phone, MapPin, AlertCircle, Edit2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { showAppAlert } from '../utils/dialog';
+import { matchesParty, computeCustomerTotals } from '../utils/partyMatcher';
 
 export default function PosBilling({ 
   onBillCreated, 
@@ -19,78 +20,87 @@ export default function PosBilling({
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [discount, setDiscount] = useState(0);
 
-  // Combined customer parties list with current Khata balances
+  // Combined customer parties list with current Khata balances (deduplicated)
   const customerPartiesList = useMemo(() => {
-    const map = new Map();
+    const list = [];
 
-    // 1. Registered Customer Parties
+    // 1. Seed with registered customer parties
     parties.filter(p => p.type !== 'supplier').forEach(party => {
-      const key = (party.phone || party.name).toLowerCase().trim();
       const opening = Number(party.openingBalance) || 0;
       const openingType = party.openingBalanceType || 'debit';
-      map.set(key, {
-        key,
+      list.push({
+        partyId: party.id,
         id: party.id,
         name: party.name,
         phone: party.phone || '',
         address: party.address || '',
         openingBalance: opening,
         openingBalanceType: openingType,
-        totalDue: openingType === 'debit' ? opening : -opening
+        bills: [],
+        payments: []
       });
     });
 
-    // 2. Customers from past bills (ALL bills are debits - no status check)
+    // 2. Aggregate bills into matching party or append new
     bills.forEach(bill => {
-      const name = (bill.customerName || 'Walk-in Customer').trim();
-      const phone = (bill.customerPhone || '').trim();
-      const key = (phone || name).toLowerCase().trim();
-
-      if (!map.has(key)) {
-        map.set(key, {
-          key,
-          id: `cust_${key}`,
-          name,
-          phone,
-          address: bill.deliveryAddress || '',
-          totalDue: 0
-        });
+      let client = list.find(c => matchesParty(bill, c));
+      if (!client) {
+        client = {
+          partyId: bill.partyId || `cust_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          id: bill.partyId || '',
+          name: (bill.customerName || 'Walk-in Customer').trim(),
+          phone: (bill.customerPhone || '').trim(),
+          address: (bill.deliveryAddress || '').trim(),
+          openingBalance: 0,
+          openingBalanceType: 'debit',
+          bills: [],
+          payments: []
+        };
+        list.push(client);
       }
-
-      const client = map.get(key);
-      const amount = Number(bill.netTotal) || 0;
-      // All bills are debits (sales invoices) - payments handle the credit side
-      client.totalDue += amount;
+      client.bills.push(bill);
+      if (!client.phone && bill.customerPhone) {
+        client.phone = bill.customerPhone.trim();
+      }
+      if (!client.address && bill.deliveryAddress) {
+        client.address = bill.deliveryAddress.trim();
+      }
     });
 
-    // 3. Deduct payments received from customers
+    // 3. Aggregate payments received from customers
     payments.filter(p => p.partyType !== 'supplier').forEach(pmt => {
-      const name = (pmt.partyName || '').trim();
-      const phone = (pmt.partyPhone || '').trim();
-      const partyId = pmt.partyId || '';
-
-      let client = null;
-      for (const c of map.values()) {
-        if ((partyId && c.id && c.id === partyId) ||
-            (phone && c.phone && c.phone === phone) ||
-            (name && c.name.toLowerCase().trim() === name.toLowerCase().trim())) {
-          client = c;
-          break;
-        }
+      let client = list.find(c => matchesParty(pmt, c));
+      if (!client) {
+        client = {
+          partyId: pmt.partyId || `cust_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          id: pmt.partyId || '',
+          name: (pmt.partyName || 'Customer').trim(),
+          phone: (pmt.partyPhone || '').trim(),
+          address: '',
+          openingBalance: 0,
+          openingBalanceType: 'debit',
+          bills: [],
+          payments: []
+        };
+        list.push(client);
       }
-
-      if (client) {
-        const isSend = pmt.paymentType === 'send';
-        const pAmt = Number(pmt.amount) || 0;
-        if (isSend) {
-          client.totalDue += pAmt;
-        } else {
-          client.totalDue -= pAmt;
-        }
+      client.payments.push(pmt);
+      if (!client.phone && pmt.partyPhone) {
+        client.phone = pmt.partyPhone.trim();
       }
     });
 
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    // 4. Compute double-entry totals
+    return list
+      .map(c => {
+        const totals = computeCustomerTotals(c);
+        return {
+          ...c,
+          ...totals,
+          key: c.partyId || c.id || (c.phone || c.name).toLowerCase().trim()
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [parties, bills, payments]);
 
   const [selectedPartyKey, setSelectedPartyKey] = useState('');
@@ -125,6 +135,12 @@ export default function PosBilling({
     if (!selectedPartyKey || selectedPartyKey === '__new__') return null;
     return customerPartiesList.find(p => p.key === selectedPartyKey) || null;
   }, [selectedPartyKey, customerPartiesList]);
+
+  const liveMatchedCustomer = useMemo(() => {
+    if (activeSelectedParty) return activeSelectedParty;
+    if (!customerPhone && !customerName) return null;
+    return customerPartiesList.find(c => matchesParty({ customerPhone, customerName }, c)) || null;
+  }, [activeSelectedParty, customerPhone, customerName, customerPartiesList]);
 
   const bankOptions = useMemo(() => {
     if (banks && banks.length > 0) {
@@ -273,12 +289,16 @@ export default function PosBilling({
 
     const billId = `CH-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const partyToAttach = activeSelectedParty || liveMatchedCustomer;
+
     const newBill = {
       id: billId,
       date: new Date().toISOString(),
+      partyId: partyToAttach?.partyId || partyToAttach?.id || undefined,
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim(),
       deliveryAddress: deliveryAddress.trim(),
+      previousBalance: partyToAttach ? Number(partyToAttach.totalDue) || 0 : 0,
       items: validItems,
       subtotal,
       discount: Number(discount) || 0,
@@ -487,6 +507,31 @@ export default function PosBilling({
                   style={{ padding: '9px 12px', fontSize: '13px' }}
                 />
               </div>
+
+              {/* Live Khata detection if customer typed matches an existing party */}
+              {!activeSelectedParty && liveMatchedCustomer && (
+                <div style={{
+                  padding: '7px 10px',
+                  borderRadius: '8px',
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  background: liveMatchedCustomer.totalDue > 0 ? 'rgba(245, 158, 11, 0.12)' : (liveMatchedCustomer.totalDue < 0 ? 'rgba(96, 165, 250, 0.12)' : 'rgba(16, 185, 129, 0.12)'),
+                  color: liveMatchedCustomer.totalDue > 0 ? '#fbbf24' : (liveMatchedCustomer.totalDue < 0 ? '#93c5fd' : '#34d399'),
+                  border: `1px solid ${liveMatchedCustomer.totalDue > 0 ? 'rgba(245, 158, 11, 0.3)' : (liveMatchedCustomer.totalDue < 0 ? 'rgba(96, 165, 250, 0.3)' : 'rgba(16, 185, 129, 0.3)')}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <span>
+                    {liveMatchedCustomer.totalDue > 0 
+                      ? `⚠️ Matched Customer "${liveMatchedCustomer.name}": Rs. ${liveMatchedCustomer.totalDue.toLocaleString()} (Pending Dues)` 
+                      : (liveMatchedCustomer.totalDue < 0 
+                          ? `💳 Matched Customer "${liveMatchedCustomer.name}": Rs. ${Math.abs(liveMatchedCustomer.totalDue).toLocaleString()} (Advance)` 
+                          : `✓ Matched Customer "${liveMatchedCustomer.name}": Account Cleared`)}
+                  </span>
+                  <span style={{ fontSize: '10px', opacity: 0.8 }}>Auto-Matched</span>
+                </div>
+              )}
 
               {selectedPartyKey === '__new__' && (
                 <div style={{ fontSize: '11px', color: 'var(--gold-light)', background: 'rgba(212, 163, 89, 0.1)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(212, 163, 89, 0.2)' }}>
@@ -865,8 +910,35 @@ export default function PosBilling({
                 <span>- Rs. {Number(discount).toLocaleString()}</span>
               </div>
             )}
+            {/* Live Customer Previous Balance & Grand Balance Breakdown */}
+            {liveMatchedCustomer && liveMatchedCustomer.totalDue !== 0 && (
+              <div style={{ 
+                marginTop: '6px', 
+                padding: '8px 10px', 
+                borderRadius: '8px', 
+                background: liveMatchedCustomer.totalDue > 0 ? 'rgba(245, 158, 11, 0.12)' : 'rgba(96, 165, 250, 0.12)',
+                border: `1px solid ${liveMatchedCustomer.totalDue > 0 ? 'rgba(245, 158, 11, 0.3)' : 'rgba(96, 165, 250, 0.3)'}`
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: liveMatchedCustomer.totalDue > 0 ? '#fbbf24' : '#93c5fd' }}>
+                  <span>{liveMatchedCustomer.totalDue > 0 ? 'Previous Unpaid Dues:' : 'Customer Advance Credit:'}</span>
+                  <span style={{ fontWeight: '700' }}>
+                    {liveMatchedCustomer.totalDue > 0 ? `+ Rs. ${liveMatchedCustomer.totalDue.toLocaleString()}` : `- Rs. ${Math.abs(liveMatchedCustomer.totalDue).toLocaleString()}`}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: '800', marginTop: '4px', paddingTop: '4px', borderTop: '1px dotted rgba(255,255,255,0.1)' }}>
+                  <span style={{ color: 'var(--text-main)' }}>
+                    {paymentStatus === 'Pending' ? 'Total Balance Due with this Bill:' : 'Remaining Khata Balance:'}
+                  </span>
+                  <span style={{ color: (paymentStatus === 'Pending' ? (netTotal + liveMatchedCustomer.totalDue) : liveMatchedCustomer.totalDue) > 0 ? '#fbbf24' : '#34d399' }}>
+                    Rs. {Math.abs(paymentStatus === 'Pending' ? (netTotal + liveMatchedCustomer.totalDue) : liveMatchedCustomer.totalDue).toLocaleString()}
+                    {(paymentStatus === 'Pending' ? (netTotal + liveMatchedCustomer.totalDue) : liveMatchedCustomer.totalDue) > 0 ? ' (Due)' : ' (Adv)'}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed var(--border-subtle)' }}>
-              <span style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Total Payable:</span>
+              <span style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>Current Bill Total:</span>
               <span className="gold-gradient-text" style={{ fontSize: '22px', fontWeight: '800' }}>
                 Rs. {netTotal.toLocaleString()}
               </span>

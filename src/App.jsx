@@ -610,6 +610,7 @@ export default function App() {
             onSaveParty={handleSaveParty}
             onUpdateParty={handleUpdateParty}
             onDeleteParty={handleDeleteParty}
+            onDataReloaded={handleDataReloaded}
           />
         )}
 
@@ -752,17 +753,19 @@ export default function App() {
       {/* Printable / WhatsApp HD Mobile Invoice Modal */}
       {selectedBillForModal && (
         <InvoiceModal 
-          bill={selectedBillForModal} 
+          bill={bills.find(b => b.id === selectedBillForModal.id) || selectedBillForModal} 
           banks={banks}
           onClose={() => setSelectedBillForModal(null)} 
+          onUpdateBillStatus={handleUpdateBillStatus}
         />
       )}
 
       {/* Printable / WhatsApp HD Mobile Purchase Voucher Modal */}
       {selectedPurchaseForModal && (
         <PurchaseModal 
-          purchase={selectedPurchaseForModal} 
+          purchase={purchases.find(p => p.id === selectedPurchaseForModal.id) || selectedPurchaseForModal} 
           onClose={() => setSelectedPurchaseForModal(null)} 
+          onUpdatePurchaseStatus={handleUpdatePurchaseStatus}
         />
       )}
 

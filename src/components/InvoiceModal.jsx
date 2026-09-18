@@ -4,13 +4,18 @@ import { BUSINESS_INFO, BANK_ACCOUNTS } from '../data/initialData';
 import { exportElementAsHdImage, exportElementAsHdPdf } from '../utils/hdExport';
 import { shareBillText, openNativeShareSheet } from '../utils/shareUtils';
 
-export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
+export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS, onUpdateBillStatus }) {
   const cardRef = useRef(null);
   const [isExporting, setIsExporting] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Local status state so user can toggle Paid/Unpaid directly on the invoice
-  const [currentStatus, setCurrentStatus] = useState(bill?.status || 'Pending');
+  // Status is directly derived from bill with immediate persistent toggle
+  const currentStatus = bill?.status || 'Pending';
+
+  const handleToggleStatus = () => {
+    const nextStatus = currentStatus === 'Paid' ? 'Pending' : 'Paid';
+    onUpdateBillStatus?.(bill.id, nextStatus);
+  };
 
   if (!bill) return null;
 
@@ -40,8 +45,12 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
     window.print();
   };
 
+  const prevBal = useMemo(() => {
+    return Number(bill.previousBalance) || 0;
+  }, [bill.previousBalance]);
+
   const generateWhatsAppMessage = () => {
-    let msg = `🍫 *${BUSINESS_INFO.name.toUpperCase()}*\n`;
+    let msg = `*${BUSINESS_INFO.name.toUpperCase()}*\n`;
     msg += `Official Mobile Bill / Order Receipt\n`;
     msg += `═══════════════════════════\n`;
     msg += `🧾 *Invoice #:* ${bill.id}\n`;
@@ -61,7 +70,12 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
     if (bill.discount > 0) {
       msg += `Discount: -Rs. ${bill.discount.toLocaleString()}\n`;
     }
-    msg += `*NET TOTAL: Rs. ${bill.netTotal.toLocaleString()}*\n`;
+    msg += `*Current Bill: Rs. ${bill.netTotal.toLocaleString()}*\n`;
+    if (prevBal !== 0) {
+      msg += `Previous Balance: *${prevBal > 0 ? `Rs. ${prevBal.toLocaleString()} (Pending Dues)` : `Rs. ${Math.abs(prevBal).toLocaleString()} (Advance)`}*\n`;
+      const totalKhata = currentStatus === 'Paid' ? prevBal : (bill.netTotal + prevBal);
+      msg += `*TOTAL KHATA BALANCE DUE: Rs. ${Math.abs(totalKhata).toLocaleString()} ${totalKhata > 0 ? '(Due)' : '(Adv)'}*\n`;
+    }
     msg += `Payment Status: *${currentStatus.toUpperCase()}* (${bill.paymentMethod})\n`;
     msg += `═══════════════════════════\n`;
     msg += `💳 *OFFICIAL BANK ACCOUNTS:*\n\n`;
@@ -168,7 +182,7 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
 
             {/* Quick Status Toggle Button */}
             <button
-              onClick={() => setCurrentStatus(prev => prev === 'Paid' ? 'Pending' : 'Paid')}
+              onClick={handleToggleStatus}
               style={{
                 background: currentStatus === 'Paid' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)',
                 color: currentStatus === 'Paid' ? '#34d399' : '#fbbf24',
@@ -330,7 +344,32 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS }) {
                 <span>- Rs. {bill.discount.toLocaleString()}</span>
               </div>
             )}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '16px', fontWeight: '800', color: '#2b1407', borderTop: '1.5px dashed #5a301a', marginTop: '6px', paddingTop: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '15px', fontWeight: '700', color: '#2b1407', borderTop: '1.5px dashed #5a301a', marginTop: '6px', paddingTop: '6px' }}>
+              <span>CURRENT BILL:</span>
+              <span style={{ color: '#884a1e', fontSize: '16px' }}>Rs. {bill.netTotal.toLocaleString()}</span>
+            </div>
+
+            {prevBal !== 0 && (
+              <div style={{ 
+                margin: '6px 0', 
+                padding: '6px 8px', 
+                borderRadius: '6px', 
+                background: prevBal > 0 ? '#fef3c7' : '#eff6ff', 
+                border: `1px solid ${prevBal > 0 ? '#f59e0b' : '#93c5fd'}`,
+                fontSize: '11.5px'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: prevBal > 0 ? '#b45309' : '#1d4ed8', fontWeight: '700' }}>
+                  <span>{prevBal > 0 ? 'Previous Unpaid Dues:' : 'Customer Advance Credit:'}</span>
+                  <span>{prevBal > 0 ? `+ Rs. ${prevBal.toLocaleString()}` : `- Rs. ${Math.abs(prevBal).toLocaleString()}`}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1e1b4b', fontWeight: '800', marginTop: '3px', borderTop: '1px dotted rgba(0,0,0,0.15)', paddingTop: '3px', fontSize: '12.5px' }}>
+                  <span>{currentStatus === 'Paid' ? 'Remaining Khata Balance:' : 'Total Khata Balance Due:'}</span>
+                  <span>Rs. {Math.abs(currentStatus === 'Paid' ? prevBal : (bill.netTotal + prevBal)).toLocaleString()} { (currentStatus === 'Paid' ? prevBal : (bill.netTotal + prevBal)) > 0 ? '(Due)' : '(Adv)' }</span>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '16px', fontWeight: '800', color: '#2b1407', borderTop: prevBal !== 0 ? 'none' : '1.5px dashed #5a301a', marginTop: '2px' }}>
               <span>NET PAYABLE:</span>
               <span style={{ color: '#884a1e', fontSize: '18px' }}>Rs. {bill.netTotal.toLocaleString()}</span>
             </div>

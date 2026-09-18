@@ -98,7 +98,7 @@ export default function SupplierLedgerModal({
       rows.push({
         id: 'opening',
         date: 'Opening',
-        particulars: `Previous / Opening Balance (${openingType === 'credit' ? "Credit / Payable" : "Debit / Advance"})`,
+        particulars: `Previous Balance (${openingType === 'credit' ? "Store Payable" : "Advance Paid"})`,
         ref: '-',
         debit: openingType === 'debit' ? openingBal : 0,
         credit: openingType === 'credit' ? openingBal : 0,
@@ -140,10 +140,10 @@ export default function SupplierLedgerModal({
         const pmt = item;
         const amt = Number(pmt.amount) || 0;
         const isRefund = pmt.paymentType === 'receive';
-        // Both payment and refund reduce payable (both are debits)
-        // Payment = we pay them, Refund = they return our advance
-        const debit = amt;
-        const credit = 0;
+        // When we pay a supplier, it is a Debit (reduces Accounts Payable).
+        // When a supplier refunds / returns money to us, it is a Credit (increases Accounts Payable or reduces advance).
+        const debit = isRefund ? 0 : amt;
+        const credit = isRefund ? amt : 0;
 
         running += (credit - debit);
 
@@ -265,6 +265,7 @@ export default function SupplierLedgerModal({
     const newPurchase = {
       id: purchaseId,
       date: new Date().toISOString(),
+      partyId: supplier.partyId || supplier.id || supplier.key,
       supplierName: supplier.name,
       supplierPhone: supplier.phone || '',
       supplierBank: supplier.bank || {},
@@ -971,8 +972,8 @@ export default function SupplierLedgerModal({
                       onChange={(e) => setEditOpeningType(e.target.value)}
                       style={{ background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '12px', fontWeight: '700' }}
                     >
-                      <option value="credit">Credit (You'll Give)</option>
-                      <option value="debit">Debit (Advance)</option>
+                      <option value="credit">You Owe Supplier (Store Payable)</option>
+                      <option value="debit">Advance Paid to Supplier</option>
                     </select>
                   </div>
                 </div>
@@ -1483,8 +1484,8 @@ export default function SupplierLedgerModal({
                     <th style={{ padding: '10px 8px', textAlign: 'left', color: '#a7f3d0', fontWeight: '700', whiteSpace: 'nowrap' }}>Date</th>
                     <th style={{ padding: '10px 8px', textAlign: 'left', color: '#a7f3d0', fontWeight: '700', minWidth: '150px' }}>Particulars / Stock</th>
                     <th style={{ padding: '10px 8px', textAlign: 'center', color: '#a7f3d0', fontWeight: '700', whiteSpace: 'nowrap' }}>Voucher #</th>
-                    <th style={{ padding: '10px 8px', textAlign: 'right', color: '#fbbf24', fontWeight: '700', whiteSpace: 'nowrap' }}>Credit (Billed)</th>
-                    <th style={{ padding: '10px 8px', textAlign: 'right', color: '#34d399', fontWeight: '700', whiteSpace: 'nowrap' }}>Debit (Paid)</th>
+                    <th style={{ padding: '10px 8px', textAlign: 'right', color: '#fbbf24', fontWeight: '700', whiteSpace: 'nowrap' }}>Purchased (Rs.)</th>
+                    <th style={{ padding: '10px 8px', textAlign: 'right', color: '#34d399', fontWeight: '700', whiteSpace: 'nowrap' }}>Paid (Rs.)</th>
                     <th style={{ padding: '10px 8px', textAlign: 'right', color: '#a7f3d0', fontWeight: '700', whiteSpace: 'nowrap' }}>Running Balance</th>
                     <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--text-dim)', fontWeight: '700', whiteSpace: 'nowrap' }}>Status</th>
                   </tr>
@@ -1537,7 +1538,7 @@ export default function SupplierLedgerModal({
                           {row.debit > 0 ? `Rs. ${row.debit.toLocaleString()}` : '-'}
                         </td>
                         <td style={{ padding: '8px', textAlign: 'right', fontWeight: '800', whiteSpace: 'nowrap', color: row.balance > 0 ? '#fbbf24' : (row.balance < 0 ? '#60a5fa' : '#34d399') }}>
-                          Rs. {Math.abs(row.balance).toLocaleString()} {row.balance > 0 ? 'Cr' : (row.balance < 0 ? 'Dr' : '✓')}
+                          Rs. {Math.abs(row.balance).toLocaleString()} {row.balance > 0 ? '(Payable)' : (row.balance < 0 ? '(Adv)' : '✓')}
                         </td>
                         <td style={{ padding: '8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                           {row.type === 'opening' ? (
@@ -1603,7 +1604,7 @@ export default function SupplierLedgerModal({
                       Rs. {totalDebits.toLocaleString()}
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: netCalculatedPayable > 0 ? '#f87171' : (netCalculatedPayable < 0 ? '#60a5fa' : '#34d399'), fontSize: '12px', whiteSpace: 'nowrap' }}>
-                      Rs. {Math.abs(netCalculatedPayable).toLocaleString()} {netCalculatedPayable > 0 ? 'Cr' : (netCalculatedPayable < 0 ? 'Dr' : '✓')}
+                      Rs. {Math.abs(netCalculatedPayable).toLocaleString()} {netCalculatedPayable > 0 ? '(Payable)' : (netCalculatedPayable < 0 ? '(Adv)' : '✓')}
                     </td>
                     <td></td>
                   </tr>

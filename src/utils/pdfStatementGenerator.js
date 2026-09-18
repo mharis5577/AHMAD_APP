@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { BUSINESS_INFO, BANK_ACCOUNTS } from '../data/initialData';
+import { computeCustomerTotals, computeSupplierTotals } from './partyMatcher';
 
 /**
  * Format IBAN with spaces for crisp readability (e.g. PK39 MEZN 0057 0201 1520 9000)
@@ -129,7 +130,12 @@ export async function generateCustomerStatementPdf(client, banks = BANK_ACCOUNTS
   const statusBoxX = rightX - statusBoxWidth;
   const statusBoxY = cardY + 11;
 
-  if (client.totalDue === 0) {
+  const totals = computeCustomerTotals(client);
+  const openingBal = totals.openingBalance;
+  const openingType = totals.openingBalanceType;
+  const netDue = totals.totalDue;
+
+  if (netDue === 0) {
     // Settled (Green)
     doc.setFillColor(236, 253, 245); // Emerald-50
     doc.setDrawColor(52, 211, 153);
@@ -140,7 +146,7 @@ export async function generateCustomerStatementPdf(client, banks = BANK_ACCOUNTS
     doc.setFontSize(9);
     doc.setFont('helvetica', 'bold');
     doc.text('SETTLED (RS. 0)', statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
-  } else if (client.totalDue > 0) {
+  } else if (netDue > 0) {
     // Dues Pending (Amber/Orange)
     doc.setFillColor(254, 243, 199); // Amber-100
     doc.setDrawColor(245, 158, 11);
@@ -150,7 +156,7 @@ export async function generateCustomerStatementPdf(client, banks = BANK_ACCOUNTS
     doc.text('PENDING DUES', statusBoxX + (statusBoxWidth / 2), statusBoxY + 4.5, { align: 'center' });
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'bold');
-    doc.text(`Rs. ${client.totalDue.toLocaleString()} (UNPAID)`, statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
+    doc.text(`Rs. ${netDue.toLocaleString()} (UNPAID)`, statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
   } else {
     // Advance Credit (Blue)
     doc.setFillColor(239, 246, 255); // Blue-50
@@ -161,113 +167,110 @@ export async function generateCustomerStatementPdf(client, banks = BANK_ACCOUNTS
     doc.text('ADVANCE BALANCE', statusBoxX + (statusBoxWidth / 2), statusBoxY + 4.5, { align: 'center' });
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'bold');
-    doc.text(`Rs. ${Math.abs(client.totalDue).toLocaleString()} (CREDIT)`, statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
+    doc.text(`Rs. ${Math.abs(netDue).toLocaleString()} (CREDIT)`, statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
   }
 
   // ==========================================
   // 3. TABLE OF ORDERS & PREVIOUS BALANCE
   // ==========================================
-  const openingBal = Number(client.openingBalance) || 0;
-  const openingType = client.openingBalanceType || 'debit';
-
   const tableRows = [];
+  let running = openingType === 'credit' ? -openingBal : openingBal;
 
   // Opening balance row if present
   if (openingBal > 0) {
     tableRows.push([
       'Opening',
-      `Previous Balance (${openingType === 'debit' ? "Debit / You'll Get" : "Credit / Advance"})`,
+      `Previous / Opening Balance (${openingType.toUpperCase()})`,
       '-',
-      `Rs. ${openingBal.toLocaleString()}`,
-      'Carried'
+      openingType === 'debit' ? `Rs. ${openingBal.toLocaleString()}` : '-',
+      openingType === 'credit' ? `Rs. ${openingBal.toLocaleString()}` : '-',
+      `Rs. ${running.toLocaleString()}`
     ]);
   }
 
-  // Order bills
-  if (client.bills && client.bills.length > 0) {
-    client.bills.forEach(b => {
-      const d = new Date(b.date).toLocaleDateString('en-PK', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      });
-      const itemsSummary = b.items?.map(i => `${i.qty}x ${i.name}`).join(', ') || 'Order Items';
+  // Merge and sort events chronologically
+  const allEvents = [
+    ...(client.bills || []).map(b => ({ ...b, eventType: 'bill' })),
+    ...(client.payments || []).map(p => ({ ...p, eventType: 'payment' }))
+  ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  allEvents.forEach(ev => {
+    const d = new Date(ev.date).toLocaleDateString('en-PK', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+
+    if (ev.eventType === 'bill') {
+      const net = Number(ev.netTotal) || 0;
+      running += net;
+      const itemsSummary = ev.items?.map(i => `${i.qty}x ${i.name}`).join(', ') || 'Chocolate Order';
       tableRows.push([
         d,
         itemsSummary,
-        `#${b.id}`,
-        `Rs. ${Number(b.netTotal || 0).toLocaleString()}`,
-        b.status || 'Pending'
+        `#${ev.id}`,
+        `Rs. ${net.toLocaleString()}`,
+        '-',
+        `Rs. ${running.toLocaleString()}`
       ]);
-    });
-  }
-
-  // Payments received / sent
-  if (client.payments && client.payments.length > 0) {
-    client.payments.forEach(p => {
-      const d = new Date(p.date).toLocaleDateString('en-PK', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      });
-      const isSend = p.paymentType === 'send';
-      tableRows.push([
-        d,
-        isSend
-          ? `Amount Sent / Refund (${p.paymentMethod || 'Cash'})${p.notes ? ` - ${p.notes}` : ''}`
-          : `Payment Received (${p.paymentMethod || 'Cash'})${p.notes ? ` - ${p.notes}` : ''}`,
-        `#${p.id}`,
-        isSend
-          ? `+ Rs. ${Number(p.amount || 0).toLocaleString()}`
-          : `- Rs. ${Number(p.amount || 0).toLocaleString()}`,
-        isSend ? 'Sent' : 'Received'
-      ]);
-    });
-  }
+    } else {
+      const amt = Number(ev.amount) || 0;
+      const isSend = ev.paymentType === 'send';
+      if (isSend) {
+        running += amt;
+        tableRows.push([
+          d,
+          `Amount Sent / Refund (${ev.paymentMethod || 'Cash'})${ev.notes ? ` - ${ev.notes}` : ''}`,
+          `#${ev.id}`,
+          `Rs. ${amt.toLocaleString()}`,
+          '-',
+          `Rs. ${running.toLocaleString()}`
+        ]);
+      } else {
+        running -= amt;
+        tableRows.push([
+          d,
+          `Payment Received (${ev.paymentMethod || 'Cash'})${ev.notes ? ` - ${ev.notes}` : ''}`,
+          `#${ev.id}`,
+          '-',
+          `Rs. ${amt.toLocaleString()}`,
+          `Rs. ${running.toLocaleString()}`
+        ]);
+      }
+    }
+  });
 
   autoTable(doc, {
     startY: cardY + cardHeight + 5,
     margin: { left: margin, right: margin },
-    head: [['Date', 'Particulars / Items Description', 'Invoice #', 'Amount (Rs.)', 'Payment Status']],
-    body: tableRows.length > 0 ? tableRows : [['-', 'No billing transactions recorded for this customer.', '-', 'Rs. 0', 'Cleared']],
+    head: [['Date', 'Particulars / Description', 'Ref #', 'Billed (Rs.)', 'Paid (Rs.)', 'Balance (Rs.)']],
+    body: tableRows.length > 0 ? tableRows : [['-', 'No billing transactions recorded for this customer.', '-', '-', '-', 'Rs. 0']],
     theme: 'grid',
     headStyles: {
       fillColor: [43, 22, 11], // Rich dark cocoa
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 8.5,
-      cellPadding: 4,
+      fontSize: 8,
+      cellPadding: 3.5,
       halign: 'left'
     },
     columnStyles: {
-      0: { cellWidth: 26, fontStyle: 'normal' },
-      1: { cellWidth: 76 },
-      2: { cellWidth: 24, halign: 'center' },
-      3: { cellWidth: 30, halign: 'right', fontStyle: 'bold' },
-      4: { cellWidth: 26, halign: 'center', fontStyle: 'bold' }
+      0: { cellWidth: 22, fontStyle: 'normal' },
+      1: { cellWidth: 64 },
+      2: { cellWidth: 20, halign: 'center' },
+      3: { cellWidth: 25, halign: 'right', fontStyle: 'bold' },
+      4: { cellWidth: 25, halign: 'right', fontStyle: 'bold' },
+      5: { cellWidth: 26, halign: 'right', fontStyle: 'bold' }
     },
     styles: {
-      fontSize: 8,
-      cellPadding: 3.5,
+      fontSize: 7.5,
+      cellPadding: 3,
       textColor: [40, 40, 40],
       lineColor: [228, 218, 206],
       lineWidth: 0.2
     },
     alternateRowStyles: {
       fillColor: [253, 250, 246]
-    },
-    didParseCell: function(data) {
-      if (data.section === 'body' && data.column.index === 4) {
-        if (data.cell.raw === 'Paid' || data.cell.raw === 'Received') {
-          data.cell.styles.textColor = [5, 150, 105]; // Green
-        } else if (data.cell.raw === 'Sent') {
-          data.cell.styles.textColor = [225, 29, 72]; // Rose / Red
-        } else if (data.cell.raw === 'Pending' || data.cell.raw === 'Unpaid') {
-          data.cell.styles.textColor = [217, 119, 6]; // Amber
-        } else if (data.cell.raw === 'Carried') {
-          data.cell.styles.textColor = [37, 99, 235]; // Blue
-        }
-      }
     }
   });
 
@@ -297,7 +300,7 @@ export async function generateCustomerStatementPdf(client, banks = BANK_ACCOUNTS
   doc.text('Total Orders Billed:', summaryX + 5, currentY + 7);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(43, 22, 11);
-  doc.text(`Rs. ${(client.totalBilled || 0).toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 7, { align: 'right' });
+  doc.text(`Rs. ${totals.totalBilled.toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 7, { align: 'right' });
 
   // Total Paid
   doc.setFont('helvetica', 'normal');
@@ -305,7 +308,7 @@ export async function generateCustomerStatementPdf(client, banks = BANK_ACCOUNTS
   doc.text('Total Amount Paid / Settled:', summaryX + 5, currentY + 13);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(5, 150, 105);
-  doc.text(`Rs. ${(client.totalPaid || 0).toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 13, { align: 'right' });
+  doc.text(`Rs. ${totals.totalPaid.toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 13, { align: 'right' });
 
   // Opening Balance
   if (openingBal > 0) {
@@ -328,10 +331,10 @@ export async function generateCustomerStatementPdf(client, banks = BANK_ACCOUNTS
   doc.setTextColor(43, 22, 11);
   doc.text('NET BALANCE DUE:', summaryX + 5, currentY + 29.5);
 
-  const dueColor = client.totalDue > 0 ? [180, 83, 9] : (client.totalDue < 0 ? [37, 99, 235] : [5, 150, 105]);
+  const dueColor = netDue > 0 ? [180, 83, 9] : (netDue < 0 ? [37, 99, 235] : [5, 150, 105]);
   doc.setTextColor(dueColor[0], dueColor[1], dueColor[2]);
   doc.setFontSize(10.5);
-  doc.text(`Rs. ${client.totalDue.toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 29.5, { align: 'right' });
+  doc.text(`Rs. ${netDue.toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 29.5, { align: 'right' });
 
   // ==========================================
   // 5. FULL-WIDTH BANK ACCOUNTS (3 LUXURY CARDS)
@@ -547,7 +550,12 @@ export async function generateSupplierStatementPdf(supplier, banks = BANK_ACCOUN
   const statusBoxX = rightX - statusBoxWidth;
   const statusBoxY = cardY + 11;
 
-  if (supplier.totalPayable === 0) {
+  const totals = computeSupplierTotals(supplier);
+  const openingBal = totals.openingBalance;
+  const openingType = totals.openingBalanceType;
+  const netPayable = totals.totalPayable;
+
+  if (netPayable === 0) {
     doc.setFillColor(236, 253, 245);
     doc.setDrawColor(52, 211, 153);
     doc.roundedRect(statusBoxX, statusBoxY, statusBoxWidth, statusBoxHeight, 2, 2, 'FD');
@@ -557,7 +565,7 @@ export async function generateSupplierStatementPdf(supplier, banks = BANK_ACCOUN
     doc.setFontSize(9);
     doc.setFont('helvetica', 'bold');
     doc.text('SETTLED (RS. 0)', statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
-  } else if (supplier.totalPayable > 0) {
+  } else if (netPayable > 0) {
     doc.setFillColor(254, 243, 199);
     doc.setDrawColor(245, 158, 11);
     doc.roundedRect(statusBoxX, statusBoxY, statusBoxWidth, statusBoxHeight, 2, 2, 'FD');
@@ -566,7 +574,7 @@ export async function generateSupplierStatementPdf(supplier, banks = BANK_ACCOUN
     doc.text('PAYABLE BALANCE', statusBoxX + (statusBoxWidth / 2), statusBoxY + 4.5, { align: 'center' });
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'bold');
-    doc.text(`Rs. ${supplier.totalPayable.toLocaleString()} (TO PAY)`, statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
+    doc.text(`Rs. ${netPayable.toLocaleString()} (TO PAY)`, statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
   } else {
     doc.setFillColor(239, 246, 255);
     doc.setDrawColor(96, 165, 250);
@@ -576,102 +584,106 @@ export async function generateSupplierStatementPdf(supplier, banks = BANK_ACCOUN
     doc.text('ADVANCE BALANCE', statusBoxX + (statusBoxWidth / 2), statusBoxY + 4.5, { align: 'center' });
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'bold');
-    doc.text(`Rs. ${Math.abs(supplier.totalPayable).toLocaleString()} (CREDIT)`, statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
+    doc.text(`Rs. ${Math.abs(netPayable).toLocaleString()} (CREDIT)`, statusBoxX + (statusBoxWidth / 2), statusBoxY + 9.2, { align: 'center' });
   }
 
-  // 3. Purchases Table
-  const openingBal = Number(supplier.openingBalance) || 0;
-  const openingType = supplier.openingBalanceType || 'credit';
-
+  // 3. Purchases & Payments Table (Double Entry)
   const tableRows = [];
+  let running = openingType === 'debit' ? -openingBal : openingBal;
 
   if (openingBal > 0) {
     tableRows.push([
       'Opening',
-      `Previous Balance (${openingType === 'credit' ? "Credit / You'll Give" : "Debit / Advance"})`,
+      `Previous / Opening Balance (${openingType.toUpperCase()})`,
       '-',
-      `Rs. ${openingBal.toLocaleString()}`,
-      'Carried'
+      openingType === 'debit' ? `Rs. ${openingBal.toLocaleString()}` : '-',
+      openingType === 'credit' ? `Rs. ${openingBal.toLocaleString()}` : '-',
+      `Rs. ${running.toLocaleString()}`
     ]);
   }
 
-  if (supplier.purchases && supplier.purchases.length > 0) {
-    supplier.purchases.forEach(p => {
-      const d = new Date(p.date).toLocaleDateString('en-PK', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      });
-      const itemsSummary = p.items?.map(i => `${i.qty}x ${i.name}`).join(', ') || 'Raw Materials';
+  const allEvents = [
+    ...(supplier.purchases || []).map(p => ({ ...p, eventType: 'purchase' })),
+    ...(supplier.payments || []).map(pmt => ({ ...pmt, eventType: 'payment' }))
+  ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  allEvents.forEach(ev => {
+    const d = new Date(ev.date).toLocaleDateString('en-PK', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+
+    if (ev.eventType === 'purchase') {
+      const net = Number(ev.netTotal) || 0;
+      running += net;
+      const itemsSummary = ev.items?.map(i => `${i.qty}x ${i.name}`).join(', ') || 'Stock Raw Materials';
       tableRows.push([
         d,
         itemsSummary,
-        `#${p.id}`,
-        `Rs. ${Number(p.netTotal || 0).toLocaleString()}`,
-        p.status || 'Pending'
+        `#${ev.id}`,
+        '-',
+        `Rs. ${net.toLocaleString()}`,
+        `Rs. ${running.toLocaleString()}`
       ]);
-    });
-  }
-
-  // Payments paid to supplier
-  if (supplier.payments && supplier.payments.length > 0) {
-    supplier.payments.forEach(pmt => {
-      const d = new Date(pmt.date).toLocaleDateString('en-PK', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      });
-      tableRows.push([
-        d,
-        `Payment Paid (${pmt.paymentMethod || 'Cash'})${pmt.notes ? ` - ${pmt.notes}` : ''}`,
-        `#${pmt.id}`,
-        `- Rs. ${Number(pmt.amount || 0).toLocaleString()}`,
-        'Paid'
-      ]);
-    });
-  }
+    } else {
+      const amt = Number(ev.amount) || 0;
+      const isRefund = ev.paymentType === 'receive';
+      if (isRefund) {
+        running += amt;
+        tableRows.push([
+          d,
+          `Refund Received (${ev.paymentMethod || 'Cash'})${ev.notes ? ` - ${ev.notes}` : ''}`,
+          `#${ev.id}`,
+          '-',
+          `Rs. ${amt.toLocaleString()}`,
+          `Rs. ${running.toLocaleString()}`
+        ]);
+      } else {
+        running -= amt;
+        tableRows.push([
+          d,
+          `Payment Paid (${ev.paymentMethod || 'Cash'})${ev.notes ? ` - ${ev.notes}` : ''}`,
+          `#${ev.id}`,
+          `Rs. ${amt.toLocaleString()}`,
+          '-',
+          `Rs. ${running.toLocaleString()}`
+        ]);
+      }
+    }
+  });
 
   autoTable(doc, {
     startY: cardY + cardHeight + 5,
     margin: { left: margin, right: margin },
-    head: [['Date', 'Purchased Stock Description', 'Voucher #', 'Amount (Rs.)', 'Payment Status']],
-    body: tableRows.length > 0 ? tableRows : [['-', 'No purchase transactions recorded.', '-', 'Rs. 0', 'Cleared']],
+    head: [['Date', 'Particulars / Description', 'Ref #', 'Paid (Rs.)', 'Purchased (Rs.)', 'Balance (Rs.)']],
+    body: tableRows.length > 0 ? tableRows : [['-', 'No purchase transactions recorded.', '-', '-', '-', 'Rs. 0']],
     theme: 'grid',
     headStyles: {
       fillColor: [15, 60, 45],
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 8.5,
-      cellPadding: 4,
+      fontSize: 8,
+      cellPadding: 3.5,
       halign: 'left'
     },
     columnStyles: {
-      0: { cellWidth: 26 },
-      1: { cellWidth: 76 },
-      2: { cellWidth: 24, halign: 'center' },
-      3: { cellWidth: 30, halign: 'right', fontStyle: 'bold' },
-      4: { cellWidth: 26, halign: 'center', fontStyle: 'bold' }
+      0: { cellWidth: 22 },
+      1: { cellWidth: 64 },
+      2: { cellWidth: 20, halign: 'center' },
+      3: { cellWidth: 25, halign: 'right', fontStyle: 'bold' },
+      4: { cellWidth: 25, halign: 'right', fontStyle: 'bold' },
+      5: { cellWidth: 26, halign: 'right', fontStyle: 'bold' }
     },
     styles: {
-      fontSize: 8,
-      cellPadding: 3.5,
+      fontSize: 7.5,
+      cellPadding: 3,
       textColor: [40, 40, 40],
       lineColor: [200, 235, 220],
       lineWidth: 0.2
     },
     alternateRowStyles: {
       fillColor: [248, 253, 250]
-    },
-    didParseCell: function(data) {
-      if (data.section === 'body' && data.column.index === 4) {
-        if (data.cell.raw === 'Paid') {
-          data.cell.styles.textColor = [5, 150, 105];
-        } else if (data.cell.raw === 'Pending' || data.cell.raw === 'Unpaid') {
-          data.cell.styles.textColor = [217, 119, 6];
-        } else if (data.cell.raw === 'Carried') {
-          data.cell.styles.textColor = [37, 99, 235];
-        }
-      }
     }
   });
 
@@ -696,14 +708,14 @@ export async function generateSupplierStatementPdf(supplier, banks = BANK_ACCOUN
   doc.text('Total Purchases:', summaryX + 5, currentY + 7);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 60, 45);
-  doc.text(`Rs. ${(supplier.totalPurchased || 0).toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 7, { align: 'right' });
+  doc.text(`Rs. ${totals.totalPurchased.toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 7, { align: 'right' });
 
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(90, 90, 90);
   doc.text('Total Amount Paid:', summaryX + 5, currentY + 13);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(5, 150, 105);
-  doc.text(`Rs. ${(supplier.totalPaid || 0).toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 13, { align: 'right' });
+  doc.text(`Rs. ${totals.totalPaid.toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 13, { align: 'right' });
 
   if (openingBal > 0) {
     doc.setFont('helvetica', 'normal');
@@ -723,10 +735,10 @@ export async function generateSupplierStatementPdf(supplier, banks = BANK_ACCOUN
   doc.setTextColor(15, 60, 45);
   doc.text('NET BALANCE PAYABLE:', summaryX + 5, currentY + 29.5);
 
-  const dueColor = supplier.totalPayable > 0 ? [180, 83, 9] : (supplier.totalPayable < 0 ? [37, 99, 235] : [5, 150, 105]);
-  doc.setTextColor(dueColor[0], dueColor[1], dueColor[2]);
+  const payableColor = netPayable > 0 ? [180, 83, 9] : (netPayable < 0 ? [37, 99, 235] : [5, 150, 105]);
+  doc.setTextColor(payableColor[0], payableColor[1], payableColor[2]);
   doc.setFontSize(10.5);
-  doc.text(`Rs. ${supplier.totalPayable.toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 29.5, { align: 'right' });
+  doc.text(`Rs. ${netPayable.toLocaleString()}`, summaryX + summaryWidth - 5, currentY + 29.5, { align: 'right' });
 
   // 5. Supplier Bank Account Box
   const supplierBankY = currentY + 40;

@@ -130,37 +130,7 @@ export const saveStoredParties = (parties) => {
 export const getStoredPayments = () => {
   try {
     const raw = localStorage.getItem(KEYS.PAYMENTS);
-    let payments = raw ? JSON.parse(raw) : [];
-
-    // Auto-migration: if customer Haris had opening balance adjusted to 949,900 from 1,000,000
-    if (typeof window !== 'undefined' && window.localStorage && payments.length === 0) {
-      const partiesRaw = localStorage.getItem(KEYS.PARTIES);
-      if (partiesRaw) {
-        const parties = JSON.parse(partiesRaw);
-        const haris = parties.find(p => p.name && p.name.toLowerCase().trim() === 'haris');
-        if (haris && Number(haris.openingBalance) === 949900) {
-          haris.openingBalance = 1000000;
-          localStorage.setItem(KEYS.PARTIES, JSON.stringify(parties));
-
-          const seededPayment = {
-            id: 'RCP-1001',
-            date: new Date().toISOString(),
-            partyId: haris.id,
-            partyName: haris.name,
-            partyPhone: haris.phone || '03337669709',
-            partyType: 'customer',
-            amount: 50100,
-            paymentMethod: 'Cash',
-            notes: 'Payment Received',
-            createdAt: new Date().toISOString()
-          };
-          payments = [seededPayment];
-          localStorage.setItem(KEYS.PAYMENTS, JSON.stringify(payments));
-        }
-      }
-    }
-
-    return payments;
+    return raw ? JSON.parse(raw) : [];
   } catch (e) {
     console.error('Failed to load payments from storage', e);
     return [];

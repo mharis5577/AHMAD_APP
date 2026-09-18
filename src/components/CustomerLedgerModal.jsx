@@ -124,7 +124,7 @@ export default function CustomerLedgerModal({
       rows.push({
         id: 'opening',
         date: 'Opening',
-        particulars: `Previous / Opening Balance (${openingType.toUpperCase()})`,
+        particulars: `Previous Balance (${openingType === 'debit' ? "Customer Owes" : "Customer Advance"})`,
         ref: '-',
         debit: openingType === 'debit' ? openingBal : 0,
         credit: openingType === 'credit' ? openingBal : 0,
@@ -267,6 +267,7 @@ export default function CustomerLedgerModal({
     const newBill = {
       id: `TCH-${Math.floor(1000 + Math.random() * 9000)}`,
       date: new Date().toISOString(),
+      partyId: client.partyId || client.id || client.key,
       customerName: client.name,
       customerPhone: client.phone || '',
       deliveryAddress: deliveryAddress.trim() || client.address || '',
@@ -317,12 +318,12 @@ export default function CustomerLedgerModal({
 
   // Safe Delete Party Enforcement
   const handleDeletePartyAttempt = () => {
-    if (client.totalDue !== 0) {
+    if (netCalculatedDue !== 0) {
       showAppAlert({
         title: 'Cannot Delete Party',
         type: 'warning',
         buttonText: 'Understood',
-        message: `Customer "${client.name}" has an active balance of Rs. ${Math.abs(client.totalDue).toLocaleString()} (${client.totalDue > 0 ? "You'll Get / Unpaid" : "Advance Credit"}).\n\nAs requested, a party can ONLY be deleted when their account balance is completely cleared (Rs. 0).\n\nPlease settle all unpaid bills and balances first.`
+        message: `Customer "${client.name}" has an active balance of Rs. ${Math.abs(netCalculatedDue).toLocaleString()} (${netCalculatedDue > 0 ? "You'll Get / Unpaid" : "Advance Credit"}).\n\nAs requested, a party can ONLY be deleted when their account balance is completely cleared (Rs. 0).\n\nPlease settle all unpaid bills and balances first.`
       });
       return;
     }
@@ -348,7 +349,7 @@ export default function CustomerLedgerModal({
 
   // Send WhatsApp Account Statement
   const sendWhatsAppStatement = async () => {
-    const pendingBills = client.bills.filter(b => b.status === 'Pending');
+    const pendingBills = (client.bills || []).filter(b => b.status === 'Pending');
 
     let msg = `🍫 *${BUSINESS_INFO.name.toUpperCase()} — CUSTOMER KHATA STATEMENT*\n`;
     msg += `═══════════════════════════\n`;
@@ -359,25 +360,25 @@ export default function CustomerLedgerModal({
     msg += `═══════════════════════════\n\n`;
 
     if (openingBal > 0) {
-      msg += `• *Previous / Opening Balance:* Rs. ${openingBal.toLocaleString()} (${openingType === 'debit' ? "You'll Give (Debit)" : "Advance Credit"})\n`;
+      msg += `• *Previous / Opening Balance:* Rs. ${openingBal.toLocaleString()} (${openingType === 'debit' ? "You'll Get (Debit)" : "Advance Credit"})\n`;
     }
 
-    msg += `• Total Bills Generated: Rs. ${(client.totalBilled || 0).toLocaleString()}\n`;
-    msg += `• Total Amount Paid: Rs. ${(client.totalPaid || 0).toLocaleString()}\n`;
+    msg += `• Total Bills Generated: Rs. ${totalBilledCalc.toLocaleString()}\n`;
+    msg += `• Total Amount Paid: Rs. ${totalPaidCalc.toLocaleString()}\n`;
     
-    if (client.totalDue > 0) {
-      msg += `• *OUTSTANDING DUE: Rs. ${client.totalDue.toLocaleString()} (TO PAY)*\n\n`;
-    } else if (client.totalDue < 0) {
-      msg += `• *ADVANCE BALANCE: Rs. ${Math.abs(client.totalDue).toLocaleString()} (CREDIT)*\n\n`;
+    if (netCalculatedDue > 0) {
+      msg += `• *OUTSTANDING DUE: Rs. ${netCalculatedDue.toLocaleString()} (TO PAY)*\n\n`;
+    } else if (netCalculatedDue < 0) {
+      msg += `• *ADVANCE BALANCE: Rs. ${Math.abs(netCalculatedDue).toLocaleString()} (CREDIT)*\n\n`;
     } else {
       msg += `• *ACCOUNT STATUS: FULLY SETTLED (RS. 0)*\n\n`;
     }
 
-    if (pendingBills.length > 0) {
+    if (pendingBills.length > 0 && netCalculatedDue > 0) {
       msg += `📋 *PENDING UNPAID INVOICES:*\n`;
       pendingBills.forEach((b, idx) => {
         const d = new Date(b.date).toLocaleDateString('en-PK', { month: 'short', day: 'numeric' });
-        msg += `${idx + 1}. #${b.id} (${d}) = *Rs. ${b.netTotal.toLocaleString()}*\n`;
+        msg += `${idx + 1}. #${b.id} (${d}) = *Rs. ${Number(b.netTotal || 0).toLocaleString()}*\n`;
       });
       msg += `\n`;
     }
@@ -1052,8 +1053,8 @@ export default function CustomerLedgerModal({
                         fontWeight: '700'
                       }}
                     >
-                      <option value="debit">Debit (You'll Get)</option>
-                      <option value="credit">Credit (Advance)</option>
+                      <option value="debit">Customer Owes You (Pending Dues)</option>
+                      <option value="credit">Customer Paid Advance (Deposit)</option>
                     </select>
                   </div>
                 </div>
@@ -1802,8 +1803,8 @@ export default function CustomerLedgerModal({
                     <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--gold-light)', fontWeight: '700', whiteSpace: 'nowrap' }}>Date</th>
                     <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--gold-light)', fontWeight: '700', minWidth: '150px' }}>Particulars / Items</th>
                     <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--gold-light)', fontWeight: '700', whiteSpace: 'nowrap' }}>Ref #</th>
-                    <th style={{ padding: '10px 8px', textAlign: 'right', color: '#fbbf24', fontWeight: '700', whiteSpace: 'nowrap' }}>Debit (Billed)</th>
-                    <th style={{ padding: '10px 8px', textAlign: 'right', color: '#34d399', fontWeight: '700', whiteSpace: 'nowrap' }}>Credit (Paid)</th>
+                    <th style={{ padding: '10px 8px', textAlign: 'right', color: '#fbbf24', fontWeight: '700', whiteSpace: 'nowrap' }}>Billed (Rs.)</th>
+                    <th style={{ padding: '10px 8px', textAlign: 'right', color: '#34d399', fontWeight: '700', whiteSpace: 'nowrap' }}>Paid (Rs.)</th>
                     <th style={{ padding: '10px 8px', textAlign: 'right', color: 'var(--gold-light)', fontWeight: '700', whiteSpace: 'nowrap' }}>Running Balance</th>
                     <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--text-dim)', fontWeight: '700', whiteSpace: 'nowrap' }}>Status</th>
                   </tr>
@@ -1856,7 +1857,7 @@ export default function CustomerLedgerModal({
                           {row.credit > 0 ? `Rs. ${row.credit.toLocaleString()}` : '-'}
                         </td>
                         <td style={{ padding: '8px', textAlign: 'right', fontWeight: '800', whiteSpace: 'nowrap', color: row.balance > 0 ? '#fbbf24' : (row.balance < 0 ? '#60a5fa' : '#34d399') }}>
-                          Rs. {Math.abs(row.balance).toLocaleString()} {row.balance > 0 ? 'Dr' : (row.balance < 0 ? 'Cr' : '✓')}
+                          Rs. {Math.abs(row.balance).toLocaleString()} {row.balance > 0 ? '(Due)' : (row.balance < 0 ? '(Adv)' : '✓')}
                         </td>
                         <td style={{ padding: '8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                           {row.type === 'opening' ? (
@@ -1921,7 +1922,7 @@ export default function CustomerLedgerModal({
                 <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 6 }}>
                   <tr style={{ background: '#221108', borderTop: '2px solid var(--gold-border)', fontWeight: '800' }}>
                     <td colSpan="3" style={{ padding: '10px 8px', color: 'var(--gold-light)' }}>
-                      Total Debits vs Credits
+                      Total Billed vs Paid
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: '#fbbf24', whiteSpace: 'nowrap' }}>
                       Rs. {totalDebits.toLocaleString()}
@@ -1930,7 +1931,7 @@ export default function CustomerLedgerModal({
                       Rs. {totalCredits.toLocaleString()}
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right', color: isPositiveDue ? '#fbbf24' : (netCalculatedDue < 0 ? '#60a5fa' : '#34d399'), fontSize: '12px', whiteSpace: 'nowrap' }}>
-                      {isPositiveDue ? `Rs. ${netCalculatedDue.toLocaleString()} Dr` : (netCalculatedDue < 0 ? `Adv: Rs. ${Math.abs(netCalculatedDue).toLocaleString()} Cr` : 'Cleared ✓')}
+                      {isPositiveDue ? `Rs. ${netCalculatedDue.toLocaleString()} (Due)` : (netCalculatedDue < 0 ? `Rs. ${Math.abs(netCalculatedDue).toLocaleString()} (Adv)` : 'All Cleared ✓')}
                     </td>
                     <td></td>
                   </tr>

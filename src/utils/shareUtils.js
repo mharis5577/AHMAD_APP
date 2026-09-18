@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
 import { Filesystem, Directory } from '@capacitor/filesystem';
-import { showAppAlert } from './dialog';
+import { showAppAlert } from './dialog.js';
 
 /**
  * Format a phone number for Pakistan / international WhatsApp

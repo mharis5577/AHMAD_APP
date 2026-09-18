@@ -303,6 +303,7 @@ export default function CreatePurchase({
     const newPurchase = {
       id: purchaseId,
       date: new Date().toISOString(),
+      partyId: activeSelectedSupplier?.partyId || activeSelectedSupplier?.id || undefined,
       supplierName: supplierName.trim(),
       supplierPhone: supplierPhone.trim(),
       supplierBank: {

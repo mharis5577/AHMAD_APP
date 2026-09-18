@@ -4,10 +4,17 @@ import { BUSINESS_INFO } from '../data/initialData';
 import { exportElementAsHdImage, exportElementAsHdPdf } from '../utils/hdExport';
 import { shareBillText, openNativeShareSheet } from '../utils/shareUtils';
 
-export default function PurchaseModal({ purchase, onClose }) {
+export default function PurchaseModal({ purchase, onClose, onUpdatePurchaseStatus }) {
   const cardRef = useRef(null);
   const [isExporting, setIsExporting] = useState(false);
-  const [currentStatus, setCurrentStatus] = useState(purchase?.status || 'Pending');
+
+  // Status directly from purchase object with immediate persistent toggle
+  const currentStatus = purchase?.status || 'Pending';
+
+  const handleToggleStatus = () => {
+    const nextStatus = currentStatus === 'Paid' ? 'Pending' : 'Paid';
+    onUpdatePurchaseStatus?.(purchase.id, nextStatus);
+  };
 
   if (!purchase) return null;
 
@@ -139,8 +146,9 @@ export default function PurchaseModal({ purchase, onClose }) {
               Purchase Voucher
             </span>
 
+            {/* Quick Status Toggle Button */}
             <button
-              onClick={() => setCurrentStatus(prev => prev === 'Paid' ? 'Pending' : 'Paid')}
+              onClick={handleToggleStatus}
               style={{
                 background: currentStatus === 'Paid' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)',
                 color: currentStatus === 'Paid' ? '#34d399' : '#fbbf24',
