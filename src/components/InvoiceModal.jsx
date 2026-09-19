@@ -1,7 +1,8 @@
-import React, { useRef, useState } from 'react';
-import { X, Share2, Printer, Copy, Check, Building2, Phone, FileText, Image as ImageIcon, CheckCircle, Clock, Share } from 'lucide-react';
+import React, { useRef, useState, useMemo } from 'react';
+import { X, Share2, Printer, Copy, Check, Building2, Phone, FileText, Image as ImageIcon, CheckCircle, Clock, Share, FileSpreadsheet } from 'lucide-react';
 import { BUSINESS_INFO, BANK_ACCOUNTS } from '../data/initialData';
 import { exportElementAsHdImage, exportElementAsHdPdf } from '../utils/hdExport';
+import { exportBillToExcel } from '../utils/excelExport';
 import { shareBillText, openNativeShareSheet } from '../utils/shareUtils';
 
 export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS, onUpdateBillStatus }) {
@@ -38,6 +39,12 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS, onU
     if (!cardRef.current) return;
     setIsExporting(true);
     await exportElementAsHdPdf(cardRef.current, `TheChocolateHouse_Bill_${bill.id}.pdf`);
+    setIsExporting(false);
+  };
+
+  const handleDownloadExcel = async () => {
+    setIsExporting(true);
+    await exportBillToExcel(bill, activeBanks, BUSINESS_INFO);
     setIsExporting(false);
   };
 
@@ -375,8 +382,16 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS, onU
             </div>
           </div>
 
+          {/* Memo / Notes Box */}
+          {bill.notes && (
+            <div style={{ marginTop: '10px', background: '#faf3eb', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2cfbd', fontSize: '11px' }}>
+              <strong style={{ color: '#5a301a' }}>Memo / Notes: </strong>
+              <span style={{ color: '#3a2214' }}>{bill.notes}</span>
+            </div>
+          )}
+
           {/* Official Bank Accounts Box */}
-          <div style={{ marginTop: '14px', background: '#f5eee6', padding: '10px 12px', borderRadius: '10px', border: '1px solid #d9c7b5', fontSize: '10.5px' }}>
+          <div style={{ marginTop: '12px', background: '#f5eee6', padding: '10px 12px', borderRadius: '10px', border: '1px solid #d9c7b5', fontSize: '10.5px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '6px', color: '#4a2614', fontWeight: '800', letterSpacing: '0.04em' }}>
               <Building2 size={13} />
               <span>OFFICIAL BANK ACCOUNTS FOR PAYMENT:</span>
@@ -419,6 +434,17 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS, onU
           >
             <FileText size={16} color="var(--gold-light)" />
             <span>{isExporting ? 'Preparing PDF...' : 'Share PDF'}</span>
+          </button>
+
+          <button
+            onClick={handleDownloadExcel}
+            disabled={isExporting}
+            className="btn-secondary"
+            style={{ padding: '12px 8px', fontSize: '13px', borderColor: '#10b981', color: '#34d399' }}
+            title="Download formatted Excel spreadsheet with calculation formulas"
+          >
+            <FileSpreadsheet size={16} color="#10b981" />
+            <span>Excel (.xlsx)</span>
           </button>
 
           <button

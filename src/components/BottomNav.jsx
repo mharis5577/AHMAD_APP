@@ -1,12 +1,13 @@
 import React from 'react';
-import { LayoutDashboard, BookOpen, Package, FileText, Building2 } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Package, FileText, Building2, TrendingUp } from 'lucide-react';
 
 export default function BottomNav({ activeTab, setActiveTab, billsCount, lowStockCount = 0 }) {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'ledger', label: 'Khata Ledger', icon: BookOpen },
-    { id: 'items', label: 'Items', icon: Package, badge: lowStockCount > 0 ? lowStockCount : undefined, badgeColor: '#fbbf24' },
+    { id: 'general-ledger', label: 'Ledger', icon: TrendingUp },
+    { id: 'ledger', label: 'Khata', icon: BookOpen },
     { id: 'pos', label: 'Billing', icon: FileText, badge: billsCount },
+    { id: 'items', label: 'Items', icon: Package, badge: lowStockCount > 0 ? lowStockCount : undefined, badgeColor: '#fbbf24' },
     { id: 'banks', label: 'Bank A/C', icon: Building2 }
   ];
 

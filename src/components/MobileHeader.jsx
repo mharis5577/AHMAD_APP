@@ -1,10 +1,13 @@
 import React, { useRef } from 'react';
-import { Phone, Download, Upload } from 'lucide-react';
+import { Phone, Download, Upload, Database } from 'lucide-react';
 import { BUSINESS_INFO } from '../data/initialData';
-import { exportAllDataJSON, importAllDataJSON } from '../utils/storage';
+import { exportAllDataJSON, importAllDataJSON, ACCOUNT_MAIN } from '../utils/storage';
 import { showAppAlert } from '../utils/dialog';
 
-export default function MobileHeader({ onDataReloaded }) {
+export default function MobileHeader({ 
+  onOpenPreviousDataModal, 
+  onDataReloaded 
+}) {
   const fileInputRef = useRef(null);
 
   const handleImportClick = () => {
@@ -19,7 +22,7 @@ export default function MobileHeader({ onDataReloaded }) {
         () => {
           showAppAlert({
             title: 'Restore Completed',
-            message: 'Your backup data has been restored successfully.',
+            message: 'Your store data has been restored successfully.',
             type: 'success'
           });
           onDataReloaded?.();
@@ -30,7 +33,8 @@ export default function MobileHeader({ onDataReloaded }) {
             message: String(err),
             type: 'error'
           });
-        }
+        },
+        ACCOUNT_MAIN
       );
     }
   };
@@ -41,74 +45,102 @@ export default function MobileHeader({ onDataReloaded }) {
       style={{ 
         position: 'sticky', 
         top: 0, 
-        zIndex: 40,
+        zIndex: 50,
         background: 'rgba(18, 11, 7, 0.95)', 
-        backdropFilter: 'blur(12px)',
+        backdropFilter: 'blur(14px)',
         borderBottom: '1px solid var(--border-subtle)',
-        padding: '10px 16px',
-        paddingTop: 'calc(10px + env(safe-area-inset-top, 0px))'
+        padding: '8px 14px',
+        paddingTop: 'calc(8px + env(safe-area-inset-top, 0px))'
       }}
     >
-      <div style={{ maxWidth: '600px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ maxWidth: '650px', margin: '0 auto' }}>
         
-        {/* Logo & Brand Info */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <img 
-            src={BUSINESS_INFO.logoUrl} 
-            alt="The Chocolate House Logo" 
-            style={{ 
-              width: '42px', 
-              height: '42px', 
-              borderRadius: '50%', 
-              objectFit: 'cover', 
-              border: '2px solid var(--gold-primary)',
-              boxShadow: '0 0 10px var(--gold-glow)'
-            }}
-          />
-          <div>
-            <h1 className="brand-font gold-gradient-text" style={{ fontSize: '16px', fontWeight: '800', lineHeight: 1.1 }}>
-              THE CHOCOLATE HOUSE
-            </h1>
-            <div style={{ fontSize: '11px', color: 'var(--gold-light)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-              Imported Chocolates
+        {/* Top Row: Brand Info + Quick Action Buttons */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+          
+          {/* Brand Identity */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <img 
+              src={BUSINESS_INFO.logoUrl} 
+              alt="The Chocolate House Logo" 
+              style={{ 
+                width: '36px', 
+                height: '36px', 
+                borderRadius: '50%', 
+                objectFit: 'cover', 
+                border: '2px solid var(--gold-primary)',
+                boxShadow: '0 0 10px var(--gold-glow)'
+              }}
+            />
+            <div>
+              <h1 className="brand-font gold-gradient-text" style={{ fontSize: '15px', fontWeight: '800', lineHeight: 1.1, margin: 0 }}>
+                THE CHOCOLATE HOUSE
+              </h1>
+              <div style={{ fontSize: '10px', color: 'var(--gold-light)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                Imported Chocolates
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Quick Actions (Call & Backup) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <a 
-            href={`tel:${BUSINESS_INFO.phone}`} 
-            className="btn-icon" 
-            title={`Call ${BUSINESS_INFO.phone}`}
-            style={{ textDecoration: 'none' }}
-          >
-            <Phone size={16} color="var(--gold-primary)" />
-          </a>
+          {/* Quick Action Icons & Import Old Data */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <button
+              onClick={onOpenPreviousDataModal}
+              className="btn-secondary"
+              title="Add / Import Previous App Records into Main Account"
+              style={{
+                padding: '5px 9px',
+                fontSize: '11px',
+                fontWeight: '700',
+                borderColor: 'rgba(212, 163, 89, 0.5)',
+                color: 'var(--gold-light)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                background: 'rgba(212, 163, 89, 0.12)',
+                borderRadius: '8px'
+              }}
+            >
+              <Database size={13} color="var(--gold-primary)" />
+              <span>Import Old Data</span>
+            </button>
 
-          <button 
-            onClick={exportAllDataJSON} 
-            className="btn-icon" 
-            title="Backup Data"
-          >
-            <Download size={16} color="var(--text-muted)" />
-          </button>
+            <a 
+              href={`tel:${BUSINESS_INFO.phone}`} 
+              className="btn-icon" 
+              title={`Call ${BUSINESS_INFO.phone}`}
+              style={{ textDecoration: 'none', width: '30px', height: '30px' }}
+            >
+              <Phone size={14} color="var(--gold-primary)" />
+            </a>
 
-          <button 
-            onClick={handleImportClick} 
-            className="btn-icon" 
-            title="Restore Data"
-          >
-            <Upload size={16} color="var(--text-muted)" />
-          </button>
+            <button 
+              onClick={() => exportAllDataJSON(ACCOUNT_MAIN)} 
+              className="btn-icon" 
+              title="Backup Store Data (JSON)"
+              style={{ width: '30px', height: '30px' }}
+            >
+              <Download size={14} color="var(--text-muted)" />
+            </button>
 
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            style={{ display: 'none' }} 
-            accept=".json" 
-            onChange={handleFileChange} 
-          />
+            <button 
+              onClick={handleImportClick} 
+              className="btn-icon" 
+              title="Restore Store Data (JSON)"
+              style={{ width: '30px', height: '30px' }}
+            >
+              <Upload size={14} color="var(--text-muted)" />
+            </button>
+
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              style={{ display: 'none' }} 
+              accept=".json" 
+              onChange={handleFileChange} 
+            />
+          </div>
+
         </div>
 
       </div>

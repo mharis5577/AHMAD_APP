@@ -21,7 +21,8 @@ import {
   FileText,
   Receipt,
   Download,
-  Upload
+  Upload,
+  Database
 } from 'lucide-react';
 import { BUSINESS_INFO, BANK_ACCOUNTS } from '../data/initialData';
 import CustomerLedgerModal from './CustomerLedgerModal';
@@ -48,7 +49,8 @@ export default function CustomerLedger({
   onSaveParty,
   onUpdateParty,
   onDeleteParty,
-  onDataReloaded
+  onDataReloaded,
+  onOpenPreviousDataModal
 }) {
   const [ledgerType, setLedgerType] = useState('customers'); // 'customers' or 'suppliers'
   const [search, setSearch] = useState('');
@@ -643,6 +645,28 @@ export default function CustomerLedger({
             accept=".json"
             onChange={handleBackupFileChange}
           />
+
+          <button
+            type="button"
+            onClick={onOpenPreviousDataModal}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              background: 'rgba(16, 185, 129, 0.12)',
+              color: '#34d399',
+              border: '1px solid rgba(16, 185, 129, 0.4)',
+              borderRadius: '10px',
+              padding: '8px 12px',
+              fontSize: '12px',
+              fontWeight: '700',
+              cursor: 'pointer'
+            }}
+            title="Import Old App Customers, Udhaar & Balances directly into Main Store Account"
+          >
+            <Database size={13} />
+            <span>Import Old Data</span>
+          </button>
 
           <button
             type="button"
@@ -1393,33 +1417,113 @@ export default function CustomerLedger({
                   </label>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.3fr', gap: '8px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <input
                     type="number"
                     min="0"
                     placeholder="Amount (Rs.)"
                     value={newPartyOpeningBal}
                     onChange={(e) => setNewPartyOpeningBal(e.target.value)}
-                    style={{ background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '13px', fontWeight: '700' }}
+                    style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '9px 12px', color: '#fff', fontSize: '13px', fontWeight: '700' }}
                   />
 
-                  <select
-                    value={newPartyOpeningType}
-                    onChange={(e) => setNewPartyOpeningType(e.target.value)}
-                    style={{ background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '12px', fontWeight: '700' }}
-                  >
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
                     {newPartyType === 'customer' ? (
                       <>
-                        <option value="debit">Customer Owes You (Pending Dues)</option>
-                        <option value="credit">Customer Paid Advance (Deposit)</option>
+                        <button
+                          type="button"
+                          onClick={() => setNewPartyOpeningType('debit')}
+                          style={{
+                            padding: '8px 6px',
+                            borderRadius: '8px',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            lineHeight: '1.25',
+                            cursor: 'pointer',
+                            textAlign: 'center',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            border: newPartyOpeningType === 'debit' ? '1px solid #f59e0b' : '1px solid var(--border-subtle)',
+                            background: newPartyOpeningType === 'debit' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.03)',
+                            color: newPartyOpeningType === 'debit' ? '#fbbf24' : 'var(--text-muted)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          Customer Owes You (Dues)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewPartyOpeningType('credit')}
+                          style={{
+                            padding: '8px 6px',
+                            borderRadius: '8px',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            lineHeight: '1.25',
+                            cursor: 'pointer',
+                            textAlign: 'center',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            border: newPartyOpeningType === 'credit' ? '1px solid #10b981' : '1px solid var(--border-subtle)',
+                            background: newPartyOpeningType === 'credit' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.03)',
+                            color: newPartyOpeningType === 'credit' ? '#34d399' : 'var(--text-muted)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          Customer Paid Advance
+                        </button>
                       </>
                     ) : (
                       <>
-                        <option value="credit">You Owe Supplier (Store Payable)</option>
-                        <option value="debit">Advance Paid to Supplier</option>
+                        <button
+                          type="button"
+                          onClick={() => setNewPartyOpeningType('credit')}
+                          style={{
+                            padding: '8px 6px',
+                            borderRadius: '8px',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            lineHeight: '1.25',
+                            cursor: 'pointer',
+                            textAlign: 'center',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            border: newPartyOpeningType === 'credit' ? '1px solid #f59e0b' : '1px solid var(--border-subtle)',
+                            background: newPartyOpeningType === 'credit' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.03)',
+                            color: newPartyOpeningType === 'credit' ? '#fbbf24' : 'var(--text-muted)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          Store Owes Supplier
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewPartyOpeningType('debit')}
+                          style={{
+                            padding: '8px 6px',
+                            borderRadius: '8px',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            lineHeight: '1.25',
+                            cursor: 'pointer',
+                            textAlign: 'center',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            border: newPartyOpeningType === 'debit' ? '1px solid #10b981' : '1px solid var(--border-subtle)',
+                            background: newPartyOpeningType === 'debit' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.03)',
+                            color: newPartyOpeningType === 'debit' ? '#34d399' : 'var(--text-muted)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          Advance to Supplier
+                        </button>
                       </>
                     )}
-                  </select>
+                  </div>
                 </div>
                 <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: '5px', lineHeight: '1.4' }}>
                   {newPartyType === 'customer' ? (

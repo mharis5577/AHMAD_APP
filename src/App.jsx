@@ -10,6 +10,8 @@ import CustomerLedger from './components/CustomerLedger';
 import BankAccountsCard from './components/BankAccountsCard';
 import InvoiceModal from './components/InvoiceModal';
 import PurchaseModal from './components/PurchaseModal';
+import PreviousDataModal from './components/PreviousDataModal';
+import GeneralLedger from './components/GeneralLedger';
 import AppDialog from './components/AppDialog';
 import { showAppAlert, showAppConfirm } from './utils/dialog';
 import { 
@@ -27,7 +29,12 @@ import {
   saveStoredParties,
   getStoredPayments,
   saveStoredPayments,
-  clearAllData
+  getStoredManualEntries,
+  saveStoredManualEntries,
+  clearAllData,
+  deleteMemoData,
+  ACCOUNT_MAIN,
+  migratePreviousDataToMainAccount
 } from './utils/storage';
 import { ShoppingBag, PackagePlus, History } from 'lucide-react';
 
@@ -35,16 +42,51 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard'); // Vyapar default is Dashboard
   const [createMode, setCreateMode] = useState('sale'); // 'sale', 'purchase', or 'history'
 
-  const [bills, setBills] = useState(getStoredBills);
-  const [purchases, setPurchases] = useState(getStoredPurchases);
-  const [suppliers, setSuppliers] = useState(getStoredSuppliers);
-  const [banks, setBanks] = useState(getStoredBanks);
-  const [items, setItems] = useState(getStoredItems);
-  const [parties, setParties] = useState(getStoredParties);
-  const [payments, setPayments] = useState(getStoredPayments);
+  const [isPreviousDataModalOpen, setIsPreviousDataModalOpen] = useState(false);
+
+  const [bills, setBills] = useState(() => getStoredBills(ACCOUNT_MAIN));
+  const [purchases, setPurchases] = useState(() => getStoredPurchases(ACCOUNT_MAIN));
+  const [suppliers, setSuppliers] = useState(() => getStoredSuppliers(ACCOUNT_MAIN));
+  const [banks, setBanks] = useState(() => getStoredBanks(ACCOUNT_MAIN));
+  const [items, setItems] = useState(() => getStoredItems(ACCOUNT_MAIN));
+  const [parties, setParties] = useState(() => getStoredParties(ACCOUNT_MAIN));
+  const [payments, setPayments] = useState(() => getStoredPayments(ACCOUNT_MAIN));
+  const [manualEntries, setManualEntries] = useState(() => getStoredManualEntries(ACCOUNT_MAIN));
 
   const [selectedBillForModal, setSelectedBillForModal] = useState(null);
   const [selectedPurchaseForModal, setSelectedPurchaseForModal] = useState(null);
+
+  // Proactive purge: remove any memo/demo data from active store on mount
+  useEffect(() => {
+    try {
+      const rawBills = localStorage.getItem('tch_bills_v2') || '';
+      const rawItems = localStorage.getItem('tch_items_v2') || '';
+      const rawParties = localStorage.getItem('tch_parties_v2') || '';
+      const rawPurchases = localStorage.getItem('tch_purchases_v2') || '';
+      const rawPayments = localStorage.getItem('tch_payments_v2') || '';
+      const rawManual = localStorage.getItem('tch_manual_entries_v2') || '';
+
+      const hasMemo = rawBills.includes('MEMO-') ||
+                      rawItems.includes('item_memo_') ||
+                      rawParties.includes('pty_memo_') ||
+                      rawPurchases.includes('PUR-MEMO-') ||
+                      rawPayments.includes('RCP-MEMO-') ||
+                      rawPayments.includes('MEMO-') ||
+                      rawManual.includes('entry_memo_');
+
+      if (hasMemo) {
+        const cleaned = deleteMemoData(ACCOUNT_MAIN);
+        setBills(cleaned.bills);
+        setItems(cleaned.items);
+        setParties(cleaned.parties);
+        setPurchases(cleaned.purchases);
+        setPayments(cleaned.payments);
+        setManualEntries(cleaned.manualEntries);
+      }
+    } catch (e) {
+      console.error('Purge error:', e);
+    }
+  }, []);
 
   // Self-healing migration: ensure all existing 'Paid' bills and purchases have a payment voucher in payments
   useEffect(() => {
@@ -234,8 +276,8 @@ export default function App() {
           phone: (newBill.customerPhone || '').trim(),
           address: (newBill.deliveryAddress || '').trim(),
           type: 'customer',
-          openingBalance: 0,
-          openingBalanceType: 'debit',
+          openingBalance: Math.abs(Number(newBill.previousBalance) || 0),
+          openingBalanceType: (Number(newBill.previousBalance) || 0) < 0 ? 'credit' : 'debit',
           createdAt: new Date().toISOString()
         };
         const updatedParties = [newParty, ...parties];
@@ -540,6 +582,7 @@ export default function App() {
         setItems(data.items);
         setParties(data.parties);
         setPayments(data.payments);
+        setManualEntries(data.manualEntries || []);
         showAppAlert({
           title: 'Data Cleared',
           message: 'All records and parties have been deleted successfully.',
@@ -549,14 +592,40 @@ export default function App() {
     });
   };
 
+  // Auto-migrate any data from legacy 'previous' keys directly into Main Account
+  useEffect(() => {
+    const { migratedBillsCount, migratedPartiesCount } = migratePreviousDataToMainAccount();
+    if (migratedBillsCount > 0 || migratedPartiesCount > 0) {
+      handleDataReloaded();
+    }
+  }, []);
+
   const handleDataReloaded = () => {
-    setBills(getStoredBills());
-    setPurchases(getStoredPurchases());
-    setSuppliers(getStoredSuppliers());
-    setBanks(getStoredBanks());
-    setItems(getStoredItems());
-    setParties(getStoredParties());
-    setPayments(getStoredPayments());
+    setBills(getStoredBills(ACCOUNT_MAIN));
+    setPurchases(getStoredPurchases(ACCOUNT_MAIN));
+    setSuppliers(getStoredSuppliers(ACCOUNT_MAIN));
+    setBanks(getStoredBanks(ACCOUNT_MAIN));
+    setItems(getStoredItems(ACCOUNT_MAIN));
+    setParties(getStoredParties(ACCOUNT_MAIN));
+    setPayments(getStoredPayments(ACCOUNT_MAIN));
+    setManualEntries(getStoredManualEntries(ACCOUNT_MAIN));
+  };
+
+  const handlePreviousDataImported = () => {
+    handleDataReloaded();
+  };
+
+  // Manual Ledger Entries Handler (Capital Inflow, Operating Expenses, etc.)
+  const handleSaveManualEntry = (newEntry) => {
+    const updated = [newEntry, ...manualEntries];
+    setManualEntries(updated);
+    saveStoredManualEntries(updated, ACCOUNT_MAIN);
+  };
+
+  const handleDeleteManualEntry = (entryId) => {
+    const updated = manualEntries.filter(m => m.id !== entryId);
+    setManualEntries(updated);
+    saveStoredManualEntries(updated, ACCOUNT_MAIN);
   };
 
   // Dashboard shortcut navigation
@@ -571,7 +640,10 @@ export default function App() {
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       
       {/* Native Mobile App Header */}
-      <MobileHeader onDataReloaded={handleDataReloaded} />
+      <MobileHeader 
+        onOpenPreviousDataModal={() => setIsPreviousDataModalOpen(true)}
+        onDataReloaded={handleDataReloaded} 
+      />
 
       {/* Main Screen View */}
       <main style={{ flex: 1, paddingBottom: '20px' }}>
@@ -587,6 +659,22 @@ export default function App() {
             onNavigateTab={handleNavigateFromDashboard}
             onViewBill={(bill) => setSelectedBillForModal(bill)}
             onViewPurchase={(pur) => setSelectedPurchaseForModal(pur)}
+          />
+        )}
+
+        {/* 1.5 GENERAL LEDGER & PROFIT (Capital -> Stock -> Sale -> Profit, Invoices & Manual Entries) */}
+        {activeTab === 'general-ledger' && (
+          <GeneralLedger 
+            bills={bills}
+            purchases={purchases}
+            items={items}
+            manualEntries={manualEntries}
+            banks={banks}
+            onSaveManualEntry={handleSaveManualEntry}
+            onDeleteManualEntry={handleDeleteManualEntry}
+            onViewBill={(bill) => setSelectedBillForModal(bill)}
+            onViewPurchase={(pur) => setSelectedPurchaseForModal(pur)}
+            onOpenPreviousDataModal={() => setIsPreviousDataModalOpen(true)}
           />
         )}
 
@@ -611,6 +699,7 @@ export default function App() {
             onUpdateParty={handleUpdateParty}
             onDeleteParty={handleDeleteParty}
             onDataReloaded={handleDataReloaded}
+            onOpenPreviousDataModal={() => setIsPreviousDataModalOpen(true)}
           />
         )}
 
@@ -775,6 +864,13 @@ export default function App() {
         setActiveTab={setActiveTab} 
         billsCount={bills.length} 
         lowStockCount={lowStockCount}
+      />
+
+      {/* Previous App Data Import & Migration Modal */}
+      <PreviousDataModal
+        isOpen={isPreviousDataModalOpen}
+        onClose={() => setIsPreviousDataModalOpen(false)}
+        onDataImported={handlePreviousDataImported}
       />
 
       {/* Global In-App Alert & Confirmation Dialog */}

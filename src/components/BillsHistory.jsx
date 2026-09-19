@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Receipt, CheckCircle, Clock, Eye, Trash2, RotateCcw } from 'lucide-react';
+import { Search, Receipt, CheckCircle, Clock, Eye, Trash2, RotateCcw, FileSpreadsheet } from 'lucide-react';
 import { showAppConfirm } from '../utils/dialog';
+import { exportBillsHistoryToExcel } from '../utils/excelExport';
 
 export default function BillsHistory({ bills, onUpdateBillStatus, onDeleteBill, onViewBill, onLoadDemoBills }) {
   const [search, setSearch] = useState('');
@@ -84,7 +85,7 @@ export default function BillsHistory({ bills, onUpdateBillStatus, onDeleteBill, 
           />
         </div>
 
-        <div style={{ display: 'flex', gap: '5px' }}>
+        <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
           {['All', 'Paid', 'Pending'].map((status) => (
             <button
               key={status}
@@ -103,6 +104,27 @@ export default function BillsHistory({ bills, onUpdateBillStatus, onDeleteBill, 
               {status}
             </button>
           ))}
+
+          <button
+            onClick={() => exportBillsHistoryToExcel(filteredBills)}
+            title="Export filtered bills to Excel (.xlsx)"
+            style={{
+              background: 'rgba(16, 185, 129, 0.12)',
+              color: '#34d399',
+              border: '1px solid rgba(16, 185, 129, 0.35)',
+              borderRadius: '8px',
+              padding: '6px 10px',
+              fontSize: '11.5px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+          >
+            <FileSpreadsheet size={13} />
+            <span>Excel</span>
+          </button>
         </div>
 
       </div>

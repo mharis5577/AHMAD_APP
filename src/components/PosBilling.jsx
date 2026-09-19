@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Trash2, User, Sparkles, RefreshCw, Clock, CheckCircle, Building2, BookOpen, Phone, MapPin, AlertCircle, Edit2 } from 'lucide-react';
+import { Plus, Trash2, User, Sparkles, RefreshCw, Clock, CheckCircle, Building2, BookOpen, Phone, MapPin, AlertCircle, Edit2, DollarSign } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { showAppAlert } from '../utils/dialog';
 import { matchesParty, computeCustomerTotals } from '../utils/partyMatcher';
@@ -19,6 +19,10 @@ export default function PosBilling({
   const [customerPhone, setCustomerPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [discount, setDiscount] = useState(0);
+
+  // Manual Previous Balance (Past Udhaar / Advance)
+  const [manualPreviousBal, setManualPreviousBal] = useState('');
+  const [manualPreviousBalType, setManualPreviousBalType] = useState('debit');
 
   // Combined customer parties list with current Khata balances (deduplicated)
   const customerPartiesList = useMemo(() => {
@@ -237,6 +241,8 @@ export default function PosBilling({
     setCustomerPhone('');
     setDeliveryAddress('');
     setDiscount(0);
+    setManualPreviousBal('');
+    setManualPreviousBalType('debit');
     setPaymentMethod('Bank Transfer (Meezan)');
     setPaymentStatus('Pending');
     setNotes('');
@@ -250,6 +256,21 @@ export default function PosBilling({
   const netTotal = useMemo(() => {
     return Math.max(0, subtotal - (Number(discount) || 0));
   }, [subtotal, discount]);
+
+  // Previous Balance (Past Udhaar / Advance) calculation
+  const effectivePreviousBalance = useMemo(() => {
+    if (manualPreviousBal && Number(manualPreviousBal) > 0) {
+      const num = Number(manualPreviousBal);
+      return manualPreviousBalType === 'debit' ? num : -num;
+    }
+    if (activeSelectedParty && activeSelectedParty.totalDue !== undefined) {
+      return Number(activeSelectedParty.totalDue) || 0;
+    }
+    if (liveMatchedCustomer && liveMatchedCustomer.totalDue !== undefined) {
+      return Number(liveMatchedCustomer.totalDue) || 0;
+    }
+    return 0;
+  }, [manualPreviousBal, manualPreviousBalType, activeSelectedParty, liveMatchedCustomer]);
 
   const validItemsCount = useMemo(() => {
     return rows.filter(r => r.name.trim() !== '' && (Number(r.price) > 0)).length;
@@ -298,7 +319,7 @@ export default function PosBilling({
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim(),
       deliveryAddress: deliveryAddress.trim(),
-      previousBalance: partyToAttach ? Number(partyToAttach.totalDue) || 0 : 0,
+      previousBalance: effectivePreviousBalance,
       items: validItems,
       subtotal,
       discount: Number(discount) || 0,
@@ -506,6 +527,79 @@ export default function PosBilling({
                   className="form-input"
                   style={{ padding: '9px 12px', fontSize: '13px' }}
                 />
+              </div>
+
+              {/* PREVIOUS BALANCE (PAST UDHAAR / ADVANCE) - Seamless Previous App Migration */}
+              <div style={{ background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '10px', border: '1px solid var(--border-subtle)', marginTop: '4px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                  <DollarSign size={14} color="var(--gold-primary)" />
+                  <label style={{ fontSize: '11px', fontWeight: '800', color: 'var(--gold-light)' }}>
+                    Previous Balance (Past Udhaar / Advance)
+                  </label>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder={activeSelectedParty ? `Matched Previous Dues: Rs. ${Math.abs(activeSelectedParty.totalDue || 0)}` : "Amount (Rs.)"}
+                    value={manualPreviousBal}
+                    onChange={(e) => setManualPreviousBal(e.target.value)}
+                    style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(20, 11, 7, 0.9)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '9px 12px', color: '#fff', fontSize: '13px', fontWeight: '700' }}
+                  />
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setManualPreviousBalType('debit')}
+                      style={{
+                        padding: '8px 6px',
+                        borderRadius: '8px',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        lineHeight: '1.25',
+                        cursor: 'pointer',
+                        textAlign: 'center',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: manualPreviousBalType === 'debit' ? '1px solid #f59e0b' : '1px solid var(--border-subtle)',
+                        background: manualPreviousBalType === 'debit' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.03)',
+                        color: manualPreviousBalType === 'debit' ? '#fbbf24' : 'var(--text-muted)',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      Customer Owes You (Dues)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setManualPreviousBalType('credit')}
+                      style={{
+                        padding: '8px 6px',
+                        borderRadius: '8px',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        lineHeight: '1.25',
+                        cursor: 'pointer',
+                        textAlign: 'center',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: manualPreviousBalType === 'credit' ? '1px solid #10b981' : '1px solid var(--border-subtle)',
+                        background: manualPreviousBalType === 'credit' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.03)',
+                        color: manualPreviousBalType === 'credit' ? '#34d399' : 'var(--text-muted)',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      Customer Paid Advance
+                    </button>
+                  </div>
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: '5px', lineHeight: '1.4' }}>
+                  {manualPreviousBalType === 'debit' 
+                    ? "👉 Customer owes past unpaid bills (Will be added to their due amount)."
+                    : "👉 Customer paid advance cash into store (Will be deducted from future orders)."}
+                </div>
               </div>
 
               {/* Live Khata detection if customer typed matches an existing party */}
@@ -911,27 +1005,27 @@ export default function PosBilling({
               </div>
             )}
             {/* Live Customer Previous Balance & Grand Balance Breakdown */}
-            {liveMatchedCustomer && liveMatchedCustomer.totalDue !== 0 && (
+            {effectivePreviousBalance !== 0 && (
               <div style={{ 
                 marginTop: '6px', 
                 padding: '8px 10px', 
                 borderRadius: '8px', 
-                background: liveMatchedCustomer.totalDue > 0 ? 'rgba(245, 158, 11, 0.12)' : 'rgba(96, 165, 250, 0.12)',
-                border: `1px solid ${liveMatchedCustomer.totalDue > 0 ? 'rgba(245, 158, 11, 0.3)' : 'rgba(96, 165, 250, 0.3)'}`
+                background: effectivePreviousBalance > 0 ? 'rgba(245, 158, 11, 0.12)' : 'rgba(96, 165, 250, 0.12)',
+                border: `1px solid ${effectivePreviousBalance > 0 ? 'rgba(245, 158, 11, 0.3)' : 'rgba(96, 165, 250, 0.3)'}`
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: liveMatchedCustomer.totalDue > 0 ? '#fbbf24' : '#93c5fd' }}>
-                  <span>{liveMatchedCustomer.totalDue > 0 ? 'Previous Unpaid Dues:' : 'Customer Advance Credit:'}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: effectivePreviousBalance > 0 ? '#fbbf24' : '#93c5fd' }}>
+                  <span>{effectivePreviousBalance > 0 ? 'Previous Balance (Past Udhaar):' : 'Previous Advance Credit:'}</span>
                   <span style={{ fontWeight: '700' }}>
-                    {liveMatchedCustomer.totalDue > 0 ? `+ Rs. ${liveMatchedCustomer.totalDue.toLocaleString()}` : `- Rs. ${Math.abs(liveMatchedCustomer.totalDue).toLocaleString()}`}
+                    {effectivePreviousBalance > 0 ? `+ Rs. ${effectivePreviousBalance.toLocaleString()}` : `- Rs. ${Math.abs(effectivePreviousBalance).toLocaleString()}`}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: '800', marginTop: '4px', paddingTop: '4px', borderTop: '1px dotted rgba(255,255,255,0.1)' }}>
                   <span style={{ color: 'var(--text-main)' }}>
                     {paymentStatus === 'Pending' ? 'Total Balance Due with this Bill:' : 'Remaining Khata Balance:'}
                   </span>
-                  <span style={{ color: (paymentStatus === 'Pending' ? (netTotal + liveMatchedCustomer.totalDue) : liveMatchedCustomer.totalDue) > 0 ? '#fbbf24' : '#34d399' }}>
-                    Rs. {Math.abs(paymentStatus === 'Pending' ? (netTotal + liveMatchedCustomer.totalDue) : liveMatchedCustomer.totalDue).toLocaleString()}
-                    {(paymentStatus === 'Pending' ? (netTotal + liveMatchedCustomer.totalDue) : liveMatchedCustomer.totalDue) > 0 ? ' (Due)' : ' (Adv)'}
+                  <span style={{ color: (paymentStatus === 'Pending' ? (netTotal + effectivePreviousBalance) : effectivePreviousBalance) > 0 ? '#fbbf24' : '#34d399' }}>
+                    Rs. {Math.abs(paymentStatus === 'Pending' ? (netTotal + effectivePreviousBalance) : effectivePreviousBalance).toLocaleString()}
+                    {(paymentStatus === 'Pending' ? (netTotal + effectivePreviousBalance) : effectivePreviousBalance) > 0 ? ' (Due)' : ' (Adv)'}
                   </span>
                 </div>
               </div>
