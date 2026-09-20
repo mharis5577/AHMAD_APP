@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
-import { Building2, Copy, Check, Share2, Edit2, Plus, Trash2, RotateCcw, X, Save, Eye, Sparkles } from 'lucide-react';
+import React, { useState, useRef, useMemo } from 'react';
+import { Building2, Copy, Check, Share2, Edit2, Plus, Trash2, RotateCcw, X, Save, Eye, Sparkles, Info, Database, HardDrive } from 'lucide-react';
 import { BUSINESS_INFO, BANK_ACCOUNTS as DEFAULT_BANKS } from '../data/initialData';
 import { shareBillText } from '../utils/shareUtils';
 import { showAppAlert, showAppConfirm } from '../utils/dialog';
+import { checkStorageSpace, getDataCounts } from '../utils/productionHelpers';
 
 const COMMON_BANKS = [
   { name: 'Meezan Bank', code: 'MEZN' },
@@ -526,6 +527,104 @@ export default function BankAccountsCard({ banks = DEFAULT_BANKS, onUpdateBanks 
         ))}
       </div>
 
+      {/* App Info & Storage Section */}
+      <AppInfoSection />
+
+    </div>
+  );
+}
+
+// App Info Component showing version and storage stats
+function AppInfoSection() {
+  const storageInfo = useMemo(() => checkStorageSpace(), []);
+  const dataCounts = useMemo(() => getDataCounts(), []);
+  
+  return (
+    <div className="glass-panel" style={{ 
+      marginTop: '24px', 
+      padding: '16px', 
+      borderTop: '1px solid var(--border-subtle)',
+      background: 'rgba(18, 10, 6, 0.7)'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+        <Info size={16} color="var(--text-dim)" />
+        <h3 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-muted)', margin: 0 }}>
+          App Information
+        </h3>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+        {/* Version Info */}
+        <div style={{ 
+          background: 'rgba(212, 163, 89, 0.08)', 
+          padding: '12px', 
+          borderRadius: '10px',
+          border: '1px solid rgba(212, 163, 89, 0.15)'
+        }}>
+          <div style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', marginBottom: '4px' }}>
+            App Version
+          </div>
+          <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--gold-light)' }}>
+            v{window.APP_VERSION || '1.0.0'}
+          </div>
+          <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: '2px' }}>
+            The Chocolate House POS
+          </div>
+        </div>
+
+        {/* Storage Info */}
+        <div style={{ 
+          background: storageInfo.isLow ? 'rgba(245, 158, 11, 0.1)' : 'rgba(16, 185, 129, 0.08)', 
+          padding: '12px', 
+          borderRadius: '10px',
+          border: `1px solid ${storageInfo.isLow ? 'rgba(245, 158, 11, 0.3)' : 'rgba(16, 185, 129, 0.15)'}`
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+            <HardDrive size={12} color={storageInfo.isLow ? '#f59e0b' : 'var(--text-dim)'} />
+            <span style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
+              Storage Used
+            </span>
+          </div>
+          <div style={{ fontSize: '16px', fontWeight: '700', color: storageInfo.isLow ? '#f59e0b' : '#10b981' }}>
+            {storageInfo.usedMB} MB
+          </div>
+          <div style={{ 
+            fontSize: '10px', 
+            color: storageInfo.isLow ? '#f59e0b' : 'var(--text-dim)', 
+            marginTop: '2px' 
+          }}>
+            {storageInfo.percentUsed}% of ~5MB limit
+          </div>
+        </div>
+      </div>
+
+      {/* Data Counts */}
+      <div style={{ 
+        marginTop: '12px', 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '6px',
+        flexWrap: 'wrap'
+      }}>
+        <Database size={12} color="var(--text-dim)" />
+        <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+          {dataCounts.bills} Bills • {dataCounts.purchases} Purchases • {dataCounts.parties} Parties • {dataCounts.items} Items
+        </span>
+      </div>
+
+      {storageInfo.isLow && (
+        <div style={{
+          marginTop: '12px',
+          padding: '10px 12px',
+          background: 'rgba(245, 158, 11, 0.1)',
+          borderRadius: '8px',
+          border: '1px solid rgba(245, 158, 11, 0.3)',
+          fontSize: '11px',
+          color: '#f59e0b'
+        }}>
+          ⚠️ Storage is getting full. Consider backing up and clearing old records.
+        </div>
+      )}
     </div>
   );
 }

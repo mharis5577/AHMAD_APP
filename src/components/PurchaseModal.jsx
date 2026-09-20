@@ -34,7 +34,7 @@ export default function PurchaseModal({ purchase, onClose, onUpdatePurchaseStatu
   const handleDownloadHdPdf = async () => {
     if (!cardRef.current) return;
     setIsExporting(true);
-    await exportElementAsHdPdf(cardRef.current, `TheChocolateHouse_Purchase_${purchase.id}.pdf`);
+    await exportElementAsHdPdf(cardRef.current, `TheChocolateHouse_Purchase_${purchase.id}.pdf`, { fitToSinglePage: true });
     setIsExporting(false);
   };
 

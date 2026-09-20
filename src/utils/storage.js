@@ -7,6 +7,9 @@ import {
   SAMPLE_MEMO_PAYMENTS,
   SAMPLE_MEMO_MANUAL_ENTRIES
 } from '../data/sampleMemoData';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
 export const ACCOUNT_MAIN = 'main';
 export const ACCOUNT_PREVIOUS = 'previous';
@@ -549,11 +552,12 @@ export const importPreviousBillsAndParties = (records, targetAccId = ACCOUNT_MAI
   };
 };
 
-export const exportAllDataJSON = (accId = getActiveAccountId()) => {
+export const exportAllDataJSON = async (accId = getActiveAccountId()) => {
   const data = {
     appName: "The Chocolate House",
     storeType: "Online Store",
     exportedAt: new Date().toISOString(),
+    appVersion: window.APP_VERSION || '1.0.0',
     accountId: accId,
     bills: getStoredBills(accId),
     purchases: getStoredPurchases(accId),
@@ -565,13 +569,47 @@ export const exportAllDataJSON = (accId = getActiveAccountId()) => {
     manualEntries: getStoredManualEntries(accId),
     business: BUSINESS_INFO
   };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `TheChocolateHouse_${accId}_Backup_${new Date().toISOString().slice(0, 10)}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+  
+  const jsonString = JSON.stringify(data, null, 2);
+  const fileName = `TheChocolateHouse_${accId}_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+  
+  // Record backup date for reminder system
+  try {
+    localStorage.setItem('tch_last_backup_date', new Date().toISOString());
+  } catch (e) {
+    // Ignore storage errors
+  }
+  
+  // Use Capacitor Filesystem and Share for native platforms
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const savedFile = await Filesystem.writeFile({
+        path: fileName,
+        data: jsonString,
+        directory: Directory.Cache,
+        encoding: 'utf8'
+      });
+      
+      await Share.share({
+        title: 'The Chocolate House Backup',
+        text: 'Store data backup file',
+        url: savedFile.uri,
+        dialogTitle: 'Share or Save Backup'
+      });
+    } catch (err) {
+      console.error('Export error:', err);
+      throw err;
+    }
+  } else {
+    // Web fallback
+    const blob = new Blob([jsonString], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 };
 
 export const importAllDataJSON = (file, onSuccess, onError, targetAccId = getActiveAccountId()) => {

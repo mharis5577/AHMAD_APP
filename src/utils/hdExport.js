@@ -60,8 +60,14 @@ export async function exportElementAsHdImage(element, filename = 'TheChocolateHo
 
 /**
  * Capture an element and export as HD PDF with guaranteed download
+ * @param {HTMLElement} element - The element to capture
+ * @param {string} filename - The filename for the PDF
+ * @param {object} options - Export options
+ * @param {boolean} options.fitToSinglePage - If true, creates a single-page PDF sized to content (for invoices)
  */
-export async function exportElementAsHdPdf(element, filename = 'TheChocolateHouse_Statement.pdf') {
+export async function exportElementAsHdPdf(element, filename = 'TheChocolateHouse_Statement.pdf', options = {}) {
+  const { fitToSinglePage = false } = options;
+
   if (!element) {
     showAppAlert({
       title: 'Export Error',
@@ -88,24 +94,36 @@ export async function exportElementAsHdPdf(element, filename = 'TheChocolateHous
 
     const imgData = canvas.toDataURL('image/jpeg', 0.95);
     
-    // Fit to standard A4 page (210mm wide x 297mm high)
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = 210;
-    const pageHeight = 297;
+    // Calculate dimensions
+    const pageWidth = 210; // A4 width in mm
     const imgWidth = pageWidth;
     const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-    let heightLeft = imgHeight;
-    let position = 0;
+    let pdf;
 
-    pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-    heightLeft -= pageHeight;
+    if (fitToSinglePage) {
+      // For invoices/bills: Create a single-page PDF with custom height to fit all content
+      // Add small padding (5mm top and bottom)
+      const customPageHeight = imgHeight + 10;
+      pdf = new jsPDF('p', 'mm', [pageWidth, customPageHeight]);
+      pdf.addImage(imgData, 'JPEG', 0, 5, imgWidth, imgHeight);
+    } else {
+      // For statements/reports: Use standard A4 with multiple pages if needed
+      const pageHeight = 297; // A4 height in mm
+      pdf = new jsPDF('p', 'mm', 'a4');
+      
+      let heightLeft = imgHeight;
+      let position = 0;
 
-    while (heightLeft > 0) {
-      position = heightLeft - imgHeight;
-      pdf.addPage();
       pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
       heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
     }
 
     if (Capacitor.isNativePlatform()) {
@@ -119,7 +137,7 @@ export async function exportElementAsHdPdf(element, filename = 'TheChocolateHous
       await Share.share({
         title: filename,
         url: savedFile.uri,
-        dialogTitle: 'Save / Share PDF Statement'
+        dialogTitle: 'Save / Share PDF'
       });
     } else {
       // Web / Browser: Direct instant file download using jsPDF native save

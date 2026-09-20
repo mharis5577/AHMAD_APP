@@ -3,15 +3,64 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="apple-touch-icon" href="/logo.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#d4a359" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TCH POS" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="msapplication-TileColor" content="#d4a359" />
+    <meta name="msapplication-tap-highlight" content="no" />
     <title>The Chocolate House - POS & Bills</title>
     <meta name="description" content="The Chocolate House - Premium Imported Chocolates Point of Sale & Billing Management System." />
+    <link rel="manifest" href="/manifest.json" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800&family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      /* Critical CSS for initial load */
+      body { background-color: #120b07; margin: 0; }
+      #root { min-height: 100vh; }
+      .app-loading {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #120b07, #1a0f0a);
+        z-index: 9999;
+      }
+      .app-loading-spinner {
+        width: 50px;
+        height: 50px;
+        border: 3px solid rgba(212, 163, 89, 0.2);
+        border-top-color: #d4a359;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      .app-loading-text {
+        margin-top: 16px;
+        color: #d4a359;
+        font-family: 'Cinzel', serif;
+        font-size: 14px;
+        letter-spacing: 0.1em;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Initial loading indicator (removed by React after mount) -->
+      <div class="app-loading">
+        <div class="app-loading-spinner"></div>
+        <div class="app-loading-text">THE CHOCOLATE HOUSE</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

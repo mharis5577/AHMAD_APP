@@ -93,6 +93,23 @@ export default function CustomerLedger({
     }
   };
 
+  const handleExportClick = async () => {
+    try {
+      await exportAllDataJSON();
+      showAppAlert({
+        title: 'Backup Created',
+        message: 'Your data backup has been prepared for sharing.',
+        type: 'success'
+      });
+    } catch (err) {
+      showAppAlert({
+        title: 'Backup Failed',
+        message: 'Failed to create backup: ' + String(err),
+        type: 'error'
+      });
+    }
+  };
+
   // Add Party Modal State
   const [isAddPartyOpen, setIsAddPartyOpen] = useState(false);
   const [newPartyName, setNewPartyName] = useState('');
@@ -596,7 +613,7 @@ export default function CustomerLedger({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <button
             type="button"
-            onClick={exportAllDataJSON}
+            onClick={handleExportClick}
             style={{
               display: 'flex',
               alignItems: 'center',

@@ -34,8 +34,10 @@ import {
   clearAllData,
   deleteMemoData,
   ACCOUNT_MAIN,
-  migratePreviousDataToMainAccount
+  migratePreviousDataToMainAccount,
+  exportAllDataJSON
 } from './utils/storage';
+import { checkStorageSpace, shouldRemindBackup } from './utils/productionHelpers';
 import { ShoppingBag, PackagePlus, History } from 'lucide-react';
 
 export default function App() {
@@ -55,6 +57,7 @@ export default function App() {
 
   const [selectedBillForModal, setSelectedBillForModal] = useState(null);
   const [selectedPurchaseForModal, setSelectedPurchaseForModal] = useState(null);
+  const [editingBill, setEditingBill] = useState(null);
 
   // Proactive purge: remove any memo/demo data from active store on mount
   useEffect(() => {
@@ -141,6 +144,53 @@ export default function App() {
       const merged = [...missingPayments, ...payments];
       setPayments(merged);
       saveStoredPayments(merged);
+    }
+  }, []);
+
+  // Production health checks on mount
+  useEffect(() => {
+    // Check storage space
+    const storage = checkStorageSpace();
+    if (storage.isCritical) {
+      showAppAlert({
+        title: 'Storage Almost Full',
+        message: 'Your device storage is almost full. Please backup your data and clear old records to prevent data loss.',
+        type: 'error'
+      });
+    } else if (storage.isLow) {
+      showAppAlert({
+        title: 'Low Storage Warning',
+        message: `Storage is ${storage.percentUsed}% full. Consider backing up and clearing old data soon.`,
+        type: 'warning'
+      });
+    }
+
+    // Check if backup reminder is needed (after 7 days)
+    if (shouldRemindBackup(7) && bills.length > 0) {
+      setTimeout(() => {
+        showAppConfirm({
+          title: 'Backup Reminder',
+          message: "It's been a while since your last backup. Would you like to backup your data now?",
+          confirmText: 'Backup Now',
+          confirmStyle: 'primary',
+          onConfirm: async () => {
+            try {
+              await exportAllDataJSON(ACCOUNT_MAIN);
+              showAppAlert({
+                title: 'Backup Created',
+                message: 'Your data has been backed up successfully.',
+                type: 'success'
+              });
+            } catch (err) {
+              showAppAlert({
+                title: 'Backup Failed',
+                message: 'Could not create backup: ' + String(err),
+                type: 'error'
+              });
+            }
+          }
+        });
+      }, 3000); // Show after 3 seconds
     }
   }, []);
 
@@ -380,6 +430,100 @@ export default function App() {
     const updatedPayments = payments.filter(p => p.billId !== billId);
     setPayments(updatedPayments);
     saveStoredPayments(updatedPayments);
+  };
+
+  // Edit Bill - Switch to sale mode with bill data pre-filled
+  const handleEditBill = (bill) => {
+    setEditingBill(bill);
+    setCreateMode('sale');
+  };
+
+  // Update existing bill (called when editing is saved)
+  const handleUpdateBill = (updatedBill) => {
+    // Restore stock from old bill before applying new bill
+    const oldBill = bills.find(b => b.id === updatedBill.id);
+    if (oldBill && oldBill.items && Array.isArray(oldBill.items)) {
+      const restoredItems = items.map(it => {
+        const sold = oldBill.items.find(bi => bi.name.toLowerCase().trim() === it.name.toLowerCase().trim());
+        if (sold) {
+          const qty = Number(sold.qty) || 1;
+          return { ...it, stock: (Number(it.stock) || 0) + qty };
+        }
+        return it;
+      });
+      // Deduct new bill quantities
+      const finalItems = restoredItems.map(it => {
+        const sold = updatedBill.items.find(bi => bi.name.toLowerCase().trim() === it.name.toLowerCase().trim());
+        if (sold) {
+          const qty = Number(sold.qty) || 1;
+          return { ...it, stock: Math.max(0, (Number(it.stock) || 0) - qty) };
+        }
+        return it;
+      });
+      setItems(finalItems);
+      saveStoredItems(finalItems);
+    }
+
+    // Update bill in list
+    const updated = bills.map(b => b.id === updatedBill.id ? { ...updatedBill, date: b.date } : b);
+    setBills(updated);
+    saveStoredBills(updated);
+
+    // Handle payment status changes
+    if (updatedBill.status === 'Paid') {
+      const existingPayment = payments.find(p => p.billId === updatedBill.id);
+      if (!existingPayment) {
+        // Create new payment
+        const newPayment = {
+          id: `RCP-${Math.floor(1000 + Math.random() * 9000)}`,
+          date: new Date().toISOString(),
+          partyId: updatedBill.customerPhone || updatedBill.customerName,
+          partyName: updatedBill.customerName,
+          partyPhone: updatedBill.customerPhone || '',
+          partyType: 'customer',
+          amount: Number(updatedBill.netTotal) || 0,
+          paymentMethod: updatedBill.paymentMethod || 'Cash',
+          notes: `Full Payment for Bill #${updatedBill.id}`,
+          billId: updatedBill.id,
+          createdAt: new Date().toISOString()
+        };
+        const updatedPayments = [newPayment, ...payments];
+        setPayments(updatedPayments);
+        saveStoredPayments(updatedPayments);
+      } else {
+        // Update existing payment amount if bill total changed
+        const updatedPayments = payments.map(p => 
+          p.billId === updatedBill.id 
+            ? { ...p, amount: Number(updatedBill.netTotal) || 0, partyName: updatedBill.customerName, partyPhone: updatedBill.customerPhone || '' }
+            : p
+        );
+        setPayments(updatedPayments);
+        saveStoredPayments(updatedPayments);
+      }
+    } else if (updatedBill.status === 'Pending') {
+      const updatedPayments = payments.filter(p => p.billId !== updatedBill.id);
+      setPayments(updatedPayments);
+      saveStoredPayments(updatedPayments);
+    }
+
+    setEditingBill(null);
+    setSelectedBillForModal(updatedBill);
+  };
+
+  // Duplicate Bill - Create new bill with same items (for repeat orders)
+  const handleDuplicateBill = (bill) => {
+    const newBillId = `CH-${Math.floor(1000 + Math.random() * 9000)}`;
+    const duplicatedBill = {
+      ...bill,
+      id: newBillId,
+      date: new Date().toISOString(),
+      status: 'Pending', // Always start as pending
+      notes: bill.notes ? `${bill.notes} (Repeat of ${bill.id})` : `Repeat of ${bill.id}`
+    };
+
+    // Use the existing bill creation logic
+    handleBillCreated(duplicatedBill);
+    setCreateMode('history'); // Stay on history to see the new bill
   };
 
   // Stock Purchases
@@ -796,6 +940,9 @@ export default function App() {
             {createMode === 'sale' && (
               <PosBilling 
                 onBillCreated={handleBillCreated} 
+                onUpdateBill={handleUpdateBill}
+                editingBill={editingBill}
+                onCancelEdit={() => setEditingBill(null)}
                 banks={banks}
                 items={items}
                 parties={parties}
@@ -825,6 +972,8 @@ export default function App() {
                 onUpdateBillStatus={handleUpdateBillStatus}
                 onDeleteBill={handleDeleteBill}
                 onViewBill={(bill) => setSelectedBillForModal(bill)}
+                onEditBill={handleEditBill}
+                onDuplicateBill={handleDuplicateBill}
               />
             )}
           </div>

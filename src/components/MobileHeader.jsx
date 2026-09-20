@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { Phone, Download, Upload, Database } from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react';
+import { Phone, Download, Upload, Database, WifiOff, Wifi } from 'lucide-react';
 import { BUSINESS_INFO } from '../data/initialData';
 import { exportAllDataJSON, importAllDataJSON, ACCOUNT_MAIN } from '../utils/storage';
 import { showAppAlert } from '../utils/dialog';
@@ -9,6 +9,21 @@ export default function MobileHeader({
   onDataReloaded 
 }) {
   const fileInputRef = useRef(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Track online/offline status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -26,6 +41,8 @@ export default function MobileHeader({
             type: 'success'
           });
           onDataReloaded?.();
+          // Reset file input so same file can be selected again
+          if (fileInputRef.current) fileInputRef.current.value = '';
         },
         (err) => {
           showAppAlert({
@@ -33,9 +50,28 @@ export default function MobileHeader({
             message: String(err),
             type: 'error'
           });
+          // Reset file input on error too
+          if (fileInputRef.current) fileInputRef.current.value = '';
         },
         ACCOUNT_MAIN
       );
+    }
+  };
+
+  const handleExportClick = async () => {
+    try {
+      await exportAllDataJSON(ACCOUNT_MAIN);
+      showAppAlert({
+        title: 'Backup Created',
+        message: 'Your data backup has been prepared for sharing.',
+        type: 'success'
+      });
+    } catch (err) {
+      showAppAlert({
+        title: 'Backup Failed',
+        message: 'Failed to create backup: ' + String(err),
+        type: 'error'
+      });
     }
   };
 
@@ -76,8 +112,26 @@ export default function MobileHeader({
               <h1 className="brand-font gold-gradient-text" style={{ fontSize: '15px', fontWeight: '800', lineHeight: 1.1, margin: 0 }}>
                 THE CHOCOLATE HOUSE
               </h1>
-              <div style={{ fontSize: '10px', color: 'var(--gold-light)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                Imported Chocolates
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '10px', color: 'var(--gold-light)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                  Imported Chocolates
+                </span>
+                {!isOnline && (
+                  <span style={{ 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    gap: '3px',
+                    fontSize: '9px', 
+                    color: '#f59e0b', 
+                    background: 'rgba(245, 158, 11, 0.15)',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    fontWeight: '600'
+                  }}>
+                    <WifiOff size={10} />
+                    Offline
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -115,7 +169,7 @@ export default function MobileHeader({
             </a>
 
             <button 
-              onClick={() => exportAllDataJSON(ACCOUNT_MAIN)} 
+              onClick={handleExportClick} 
               className="btn-icon" 
               title="Backup Store Data (JSON)"
               style={{ width: '30px', height: '30px' }}

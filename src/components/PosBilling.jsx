@@ -1,11 +1,14 @@
-import React, { useState, useMemo } from 'react';
-import { Plus, Trash2, User, Sparkles, RefreshCw, Clock, CheckCircle, Building2, BookOpen, Phone, MapPin, AlertCircle, Edit2, DollarSign } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Plus, Trash2, User, Sparkles, RefreshCw, Clock, CheckCircle, Building2, BookOpen, Phone, MapPin, AlertCircle, Edit2, DollarSign, X } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { showAppAlert } from '../utils/dialog';
 import { matchesParty, computeCustomerTotals } from '../utils/partyMatcher';
 
 export default function PosBilling({ 
   onBillCreated, 
+  onUpdateBill,
+  editingBill,
+  onCancelEdit,
   banks = [], 
   onNavigateToBanks, 
   items = [], 
@@ -177,6 +180,53 @@ export default function PosBilling({
     { id: '2', name: '', qty: 1, price: '', total: 0 }
   ]);
 
+  // Load editing bill data when editingBill prop changes
+  useEffect(() => {
+    if (editingBill) {
+      setCustomerName(editingBill.customerName || '');
+      setCustomerPhone(editingBill.customerPhone || '');
+      setDeliveryAddress(editingBill.deliveryAddress || '');
+      setDiscount(editingBill.discount || 0);
+      setPaymentMethod(editingBill.paymentMethod || bankOptions[0]?.id || 'Cash');
+      setPaymentStatus(editingBill.status || 'Pending');
+      setNotes(editingBill.notes || '');
+      
+      // Convert bill items to rows
+      if (editingBill.items && editingBill.items.length > 0) {
+        const editRows = editingBill.items.map((item, idx) => ({
+          id: String(Date.now() + idx),
+          name: item.name || '',
+          qty: item.qty || 1,
+          price: item.price || 0,
+          total: (item.qty || 1) * (item.price || 0)
+        }));
+        setRows(editRows);
+      }
+
+      // Set previous balance if exists
+      if (editingBill.previousBalance) {
+        const prevBal = Number(editingBill.previousBalance);
+        if (prevBal !== 0) {
+          setManualPreviousBal(Math.abs(prevBal).toString());
+          setManualPreviousBalType(prevBal >= 0 ? 'debit' : 'credit');
+        }
+      }
+
+      // Find and select matching party from dropdown
+      const matchedParty = customerPartiesList.find(p => 
+        p.partyId === editingBill.partyId ||
+        (editingBill.customerPhone && p.phone === editingBill.customerPhone) ||
+        (editingBill.customerName && p.name.toLowerCase() === editingBill.customerName.toLowerCase())
+      );
+      if (matchedParty) {
+        setSelectedPartyKey(matchedParty.key);
+      } else {
+        setSelectedPartyKey('__new__');
+        setIsEditingDetails(true);
+      }
+    }
+  }, [editingBill, customerPartiesList]);
+
   // Handle row field change with inventory auto-fill
   const handleRowChange = (id, field, value) => {
     setRows(prevRows =>
@@ -308,13 +358,14 @@ export default function PosBilling({
       return;
     }
 
-    const billId = `CH-${Math.floor(1000 + Math.random() * 9000)}`;
+    // Use existing bill ID if editing, otherwise generate new
+    const billId = editingBill ? editingBill.id : `CH-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const partyToAttach = activeSelectedParty || liveMatchedCustomer;
 
-    const newBill = {
+    const billData = {
       id: billId,
-      date: new Date().toISOString(),
+      date: editingBill ? editingBill.date : new Date().toISOString(),
       partyId: partyToAttach?.partyId || partyToAttach?.id || undefined,
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim(),
@@ -341,13 +392,64 @@ export default function PosBilling({
       // Ignored if confetti fails
     }
 
-    onBillCreated(newBill);
+    if (editingBill && onUpdateBill) {
+      onUpdateBill(billData);
+    } else {
+      onBillCreated(billData);
+    }
     handleReset();
   };
 
   return (
     <div style={{ maxWidth: '650px', margin: '0 auto', padding: '14px 14px 40px 14px' }}>
       
+      {/* Edit Mode Banner */}
+      {editingBill && (
+        <div 
+          className="glass-card" 
+          style={{ 
+            padding: '12px 16px', 
+            marginBottom: '14px', 
+            background: 'rgba(59, 130, 246, 0.15)', 
+            borderLeft: '4px solid #3b82f6',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '10px'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Edit2 size={16} color="#3b82f6" />
+            <span style={{ fontSize: '13px', fontWeight: '700', color: '#60a5fa' }}>
+              Editing Bill #{editingBill.id}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              handleReset();
+              onCancelEdit && onCancelEdit();
+            }}
+            style={{
+              background: 'rgba(239, 68, 68, 0.15)',
+              color: '#f87171',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              borderRadius: '6px',
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+          >
+            <X size={14} />
+            Cancel Edit
+          </button>
+        </div>
+      )}
+
       <form onSubmit={handleGenerateBill}>
         
         {/* Customer & Online Delivery Info */}
@@ -1051,11 +1153,12 @@ export default function PosBilling({
             padding: '16px',
             fontSize: '15px',
             opacity: validItemsCount === 0 ? 0.5 : 1,
-            cursor: validItemsCount === 0 ? 'not-allowed' : 'pointer'
+            cursor: validItemsCount === 0 ? 'not-allowed' : 'pointer',
+            background: editingBill ? 'linear-gradient(135deg, #3b82f6, #2563eb)' : undefined
           }}
         >
-          <Sparkles size={18} />
-          <span>Generate HD Mobile Size Bill</span>
+          {editingBill ? <Edit2 size={18} /> : <Sparkles size={18} />}
+          <span>{editingBill ? 'Update Bill' : 'Generate HD Mobile Size Bill'}</span>
         </button>
 
       </form>

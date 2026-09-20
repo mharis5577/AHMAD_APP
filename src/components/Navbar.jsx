@@ -23,6 +23,8 @@ export default function Navbar({ activeTab, setActiveTab, billsCount, onDataRelo
             type: 'success'
           });
           onDataReloaded?.();
+          // Reset file input so same file can be selected again
+          if (fileInputRef.current) fileInputRef.current.value = '';
         },
         (err) => {
           showAppAlert({
@@ -30,8 +32,27 @@ export default function Navbar({ activeTab, setActiveTab, billsCount, onDataRelo
             message: String(err),
             type: 'error'
           });
+          // Reset file input on error too
+          if (fileInputRef.current) fileInputRef.current.value = '';
         }
       );
+    }
+  };
+
+  const handleExportClick = async () => {
+    try {
+      await exportAllDataJSON();
+      showAppAlert({
+        title: 'Backup Created',
+        message: 'Your data backup has been prepared for sharing.',
+        type: 'success'
+      });
+    } catch (err) {
+      showAppAlert({
+        title: 'Backup Failed',
+        message: 'Failed to create backup: ' + String(err),
+        type: 'error'
+      });
     }
   };
 
@@ -164,7 +185,7 @@ export default function Navbar({ activeTab, setActiveTab, billsCount, onDataRelo
         {/* Actions: Backup & Restore */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button 
-            onClick={exportAllDataJSON} 
+            onClick={handleExportClick} 
             className="btn-secondary" 
             style={{ padding: '8px 12px', fontSize: '12px' }}
             title="Export all bills backup"

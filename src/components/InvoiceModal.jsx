@@ -38,7 +38,7 @@ export default function InvoiceModal({ bill, onClose, banks = BANK_ACCOUNTS, onU
   const handleDownloadHdPdf = async () => {
     if (!cardRef.current) return;
     setIsExporting(true);
-    await exportElementAsHdPdf(cardRef.current, `TheChocolateHouse_Bill_${bill.id}.pdf`);
+    await exportElementAsHdPdf(cardRef.current, `TheChocolateHouse_Bill_${bill.id}.pdf`, { fitToSinglePage: true });
     setIsExporting(false);
   };
 
